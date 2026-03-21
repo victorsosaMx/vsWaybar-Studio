@@ -22,7 +22,7 @@ optdepends=(
     'network-manager-applet: network settings (network module on-click)'
 )
 source=("$pkgname-$pkgver.tar.gz::https://github.com/victorsosaMx/vsWaybar-Studio/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('72c4c5a872b14ff727ff83ef7dd72db989a21d3f0e9ac07f9791ee345408c1b4')
+sha256sums=('d5a1a0bf0a38510249bdb4bb187be0d7c3f3853035867ff216ba289836557320')
 
 package() {
     cd "vsWaybar-Studio-$pkgver"
