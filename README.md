@@ -1,5 +1,8 @@
 # vsWaybar Studio
 
+[![AUR version](https://img.shields.io/aur/version/vswaybar-studio?color=1793d1&label=AUR&logo=arch-linux)](https://aur.archlinux.org/packages/vswaybar-studio)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 A visual configuration editor for [Waybar](https://github.com/Alexays/Waybar) — build, style and preview your bar in real time.
 
 No more editing JSON and CSS by hand. Design your Waybar with live feedback, templates and full module control.
