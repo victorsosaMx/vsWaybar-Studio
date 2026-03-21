@@ -119,7 +119,7 @@ This project is built on top of amazing open-source work:
 - [pavucontrol](https://freedesktop.org/software/pulseaudio/pavucontrol/) — PulseAudio volume control launched from the audio module
 - [pacman-contrib](https://gitlab.archlinux.org/pacman/pacman-contrib) (`checkupdates`) — used by the updates module to count pending packages
 - [OpenWeatherMap API](https://openweathermap.org/api) — weather data source for `weather.py` (free API key required)
-- [vsFetch](https://github.com/victorsosaMx) — system info fetcher launched from the arch logo module
+- [vsFetch](https://github.com/victorsosaMx/vsFetch) — system info fetcher launched from the arch logo module
 
 **Color palettes**
 - [Catppuccin](https://github.com/catppuccin/catppuccin) — Soothing pastel theme framework
