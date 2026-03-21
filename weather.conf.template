@@ -1,0 +1,5 @@
+# vsWaybar — Weather configuration
+# Get your free API key at https://openweathermap.org/api
+API_KEY=
+CITY=Monterrey
+UNITS=metric

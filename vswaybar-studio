@@ -1,0 +1,4059 @@
+#!/usr/bin/env python3
+"""vsWaybar Studio — graphical config editor for Waybar"""
+
+__version__ = "1.0"
+
+import gi
+gi.require_version('Gtk', '3.0')
+gi.require_version('PangoCairo', '1.0')
+from gi.repository import Gtk, Gdk, GLib, Pango, PangoCairo
+import json, os, copy, subprocess, re, math, colorsys, random, shutil, datetime, locale
+
+# ── paths ─────────────────────────────────────────────────────────────────────
+
+CONFIG_PATH = os.path.expanduser("~/.config/waybar/config")
+CSS_PATH    = os.path.expanduser("~/.config/waybar/style.css")
+
+# ── defaults ──────────────────────────────────────────────────────────────────
+
+# Clock keys omitted from JSON when empty (waybar uses system default for absent keys)
+_CLOCK_OPTIONAL_KEYS = ("tooltip-format", "on-click-right", "on-click-middle", "timezone", "locale")
+
+DEFAULTS = {
+    "layer":         "top",
+    "position":      "top",
+    "height":        42,
+    "spacing":       10,
+    "margin-top":    0,
+    "margin-bottom": 0,
+    "margin-left":   0,
+    "margin-right":  0,
+    "font-family":   "Product Sans",
+    "font-size":     14,
+    "bar-style":     "bar",
+    "opacity":       100,
+    "zone-radius":   0,
+    "border-width":  0,
+    "separators":    False,
+    "mod-padding":   8,
+    "modules-left":   ["custom/arch", "hyprland/workspaces", "hyprland/window"],
+    "modules-center": ["custom/weather", "clock"],
+    "modules-right":  ["tray", "custom/updates", "pulseaudio", "network",
+                       "memory", "cpu", "battery", "custom/swaync", "custom/power"],
+    "custom/arch": {
+        "format":          "<span font='JetBrainsMono Nerd Font Mono 20' color='#ffffff'>󰣇</span>",
+        "on-click":        "$HOME/.local/bin/vsfetch",
+        "tooltip":         False,
+        "arch-icon-glyph": "󰣇",
+        "arch-pad-left":   15,
+        "arch-pad-right":  10,
+    },
+    "hyprland/workspaces": {
+        "format":          "{id}",
+        "on-scroll-up":    "hyprctl dispatch workspace e-1",
+        "on-scroll-down":  "hyprctl dispatch workspace e+1",
+        "persistent-workspaces": {"*": [1, 2, 3, 4, 5]},
+        "anim-color-1":   "#89b4fa",
+        "anim-color-2":   "#cba6f7",
+        "anim-duration":   3,
+        "button-radius":   5,
+        "button-pad-v":    0,
+        "button-pad-h":    4,
+        "button-minw":     35,
+    },
+    "hyprland/window": {
+        "format": "{}",
+        "max-length": 60,
+        "separate-outputs": True,
+    },
+    "clock": {
+        "format":          "{:%H:%M  |  %A %d %B}",
+        "tooltip-format":  "",
+        "timezone":        "America/Monterrey",
+        "locale":          "es_MX.utf8",
+        "interval":        1,
+        "on-click":        "flatpak run com.ml4w.calendar",
+        "on-click-right":  "",
+        "on-click-middle": "",
+        "tooltip":         True,
+    },
+    "cpu": {
+        "format": "󰍛 {usage}%",
+        "tooltip": True,
+        "interval": 2,
+    },
+    "memory": {
+        "format": "󰾆 {used:0.1f}G",
+        "tooltip-format": "RAM: {used:0.1f}G / {total:0.1f}G\nSwap: {swapUsed:0.1f}G / {swapTotal:0.1f}G",
+        "interval": 5,
+    },
+    "network": {
+        "format-wifi":         "󰖩 {signalStrength}%",
+        "format-ethernet":     "󰈀 {ipaddr}",
+        "format-disconnected": "󰖪 Sin red",
+        "tooltip-format":      "{ifname}: {ipaddr}/{cidr}\n{essid} ({signalStrength}%)\n↑ {bandwidthUpBits}  ↓ {bandwidthDownBits}",
+        "on-click": "nm-connection-editor",
+        "interval": 5,
+    },
+    "pulseaudio": {
+        "format": "{icon} {volume}%",
+        "format-muted": "󰝟 mute",
+        "format-icons": {"default": ["󰕿", "󰖀", "󰕾"]},
+        "on-click": "pavucontrol",
+        "scroll-step": 5,
+    },
+    "battery": {
+        "format": "{icon} {capacity}%",
+        "format-icons": ["󰁺", "󰁼", "󰁾", "󰂀", "󰂂", "󰁹"],
+        "format-charging": "󰂄 {capacity}%",
+        "format-plugged":  "󰚥 {capacity}%",
+        "states": {"warning": 30, "critical": 15},
+    },
+    "tray": {
+        "spacing": 8,
+        "icon-size": 18,
+    },
+    "custom/power": {
+        "format": "⏻",
+        "on-click": "wlogout -b 3 -c 20 -r 20 -L 400 -R 400 -T 200 -B 200 --protocol layer-shell",
+        "tooltip": False,
+    },
+    "custom/weather": {
+        "format": "{}",
+        "exec": "$HOME/.config/waybar/scripts/weather.py",
+        "return-type": "json",
+        "interval": 3600,
+        "tooltip": True,
+        "on-click": "flatpak run io.github.amit9838.mousam",
+    },
+    "custom/swaync": {
+        "format": "<span font='JetBrainsMono Nerd Font Mono 16'>{icon}</span>",
+        "format-icons": {
+            "none": "󰂚", "notification": "󰂜",
+            "dnd-none": "󰂛", "dnd-notification": "󰂛",
+        },
+        "return-type": "json",
+        "exec-if": "which swaync-client",
+        "exec":    "swaync-client -swb",
+        "on-click": "swaync-client -t -sw",
+        "on-click-right": "swaync-client -d -sw",
+        "escape": True,
+        "tooltip": False,
+    },
+    "custom/updates": {
+        "exec": "count=$(checkupdates 2>/dev/null | wc -l); [ \"$count\" -gt 0 ] && echo '{\"text\":\"󰚰 '\"$count\"'\",\"class\":\"pending\"}' || echo '{\"text\":\"󰚰 0\",\"class\":\"updated\"}'",
+        "return-type": "json",
+        "interval": 60,
+        "tooltip": False,
+        "on-click": "kitty --class floating-terminal -e ~/.config/hypr/scripts/install-updates.sh",
+    },
+}
+
+_CATPPUCCIN_MOCHA = {
+    "base":     "#1e1e2e",
+    "mantle":   "#181825",
+    "crust":    "#11111b",
+    "surface0": "#313244",
+    "surface1": "#45475a",
+    "overlay0": "#6c7086",
+    "text":     "#cdd6f4",
+    "subtext0": "#a6adc8",
+    "blue":     "#89b4fa",
+    "mauve":    "#cba6f7",
+    "red":      "#f38ba8",
+    "green":    "#a6e3a1",
+    "yellow":   "#f9e2af",
+    "peach":    "#fab387",
+}
+
+# ── palettes ──────────────────────────────────────────────────────────────────
+
+_PALETTES = {
+    "Catppuccin Mocha": {
+        "base": "#1e1e2e", "mantle": "#181825", "crust": "#11111b",
+        "surface0": "#313244", "surface1": "#45475a", "overlay0": "#6c7086",
+        "text": "#cdd6f4", "subtext0": "#a6adc8",
+        "blue": "#89b4fa", "mauve": "#cba6f7", "red": "#f38ba8",
+        "green": "#a6e3a1", "yellow": "#f9e2af", "peach": "#fab387",
+    },
+    "Forest Night": {
+        "base": "#11140e", "mantle": "#43483e", "crust": "#11140e",
+        "surface0": "#1d211a", "surface1": "#282b24", "overlay0": "#33362f",
+        "text": "#e1e4d9", "subtext0": "#c4c8bb",
+        "blue": "#abd290", "mauve": "#a0cfcf", "red": "#ffb4ab",
+        "green": "#a0cfcf", "yellow": "#3e4a35", "peach": "#1e4e4e",
+    },
+    "Catppuccin Latte": {
+        "base": "#eff1f5", "mantle": "#e6e9ef", "crust": "#dce0e8",
+        "surface0": "#ccd0da", "surface1": "#b5bfe2", "overlay0": "#9ca0b0",
+        "text": "#4c4f69", "subtext0": "#6c6f85",
+        "blue": "#1e66f5", "mauve": "#8839ef", "red": "#d20f39",
+        "green": "#40a02b", "yellow": "#df8e1d", "peach": "#fe640b",
+    },
+    "Catppuccin Macchiato": {
+        "base": "#24273a", "mantle": "#1e2030", "crust": "#181926",
+        "surface0": "#363a4f", "surface1": "#494d64", "overlay0": "#6e738d",
+        "text": "#cad3f5", "subtext0": "#b8c0e0",
+        "blue": "#8aadf4", "mauve": "#c6a0f6", "red": "#ed8796",
+        "green": "#a6da95", "yellow": "#eed49f", "peach": "#f5a97f",
+    },
+    "Catppuccin Frappe": {
+        "base": "#303446", "mantle": "#292c3c", "crust": "#232634",
+        "surface0": "#414559", "surface1": "#51576d", "overlay0": "#737994",
+        "text": "#c6d0f5", "subtext0": "#b5bfe2",
+        "blue": "#8caaee", "mauve": "#ca9ee6", "red": "#e78284",
+        "green": "#a6d189", "yellow": "#e5c890", "peach": "#ef9f76",
+    },
+    "Dracula": {
+        "base": "#282a36", "mantle": "#21222c", "crust": "#191a21",
+        "surface0": "#343746", "surface1": "#3f4157", "overlay0": "#6272a4",
+        "text": "#f8f8f2", "subtext0": "#e2e2dc",
+        "blue": "#8be9fd", "mauve": "#bd93f9", "red": "#ff5555",
+        "green": "#50fa7b", "yellow": "#f1fa8c", "peach": "#ffb86c",
+    },
+    "Nord": {
+        "base": "#2e3440", "mantle": "#272c36", "crust": "#1f2430",
+        "surface0": "#3b4252", "surface1": "#434c5e", "overlay0": "#4c566a",
+        "text": "#eceff4", "subtext0": "#d8dee9",
+        "blue": "#88c0d0", "mauve": "#b48ead", "red": "#bf616a",
+        "green": "#a3be8c", "yellow": "#ebcb8b", "peach": "#d08770",
+    },
+    "Gruvbox Dark": {
+        "base": "#282828", "mantle": "#1d2021", "crust": "#181616",
+        "surface0": "#32302f", "surface1": "#3c3836", "overlay0": "#665c54",
+        "text": "#ebdbb2", "subtext0": "#d5c4a1",
+        "blue": "#83a598", "mauve": "#d3869b", "red": "#fb4934",
+        "green": "#b8bb26", "yellow": "#fabd2f", "peach": "#fe8019",
+    },
+    "Tokyo Night": {
+        "base": "#1a1b26", "mantle": "#16161e", "crust": "#13131a",
+        "surface0": "#24283b", "surface1": "#292e42", "overlay0": "#565f89",
+        "text": "#c0caf5", "subtext0": "#a9b1d6",
+        "blue": "#7aa2f7", "mauve": "#bb9af7", "red": "#f7768e",
+        "green": "#9ece6a", "yellow": "#e0af68", "peach": "#ff9e64",
+    },
+    "One Dark": {
+        "base": "#282c34", "mantle": "#21252b", "crust": "#1c1f24",
+        "surface0": "#2c313c", "surface1": "#3e4452", "overlay0": "#5c6370",
+        "text": "#abb2bf", "subtext0": "#9da5b4",
+        "blue": "#61afef", "mauve": "#c678dd", "red": "#e06c75",
+        "green": "#98c379", "yellow": "#e5c07b", "peach": "#d19a66",
+    },
+    "Rosé Pine": {
+        "base": "#191724", "mantle": "#1f1d2e", "crust": "#26233a",
+        "surface0": "#2a273f", "surface1": "#403d52", "overlay0": "#6e6a86",
+        "text": "#e0def4", "subtext0": "#908caa",
+        "blue": "#9ccfd8", "mauve": "#c4a7e7", "red": "#eb6f92",
+        "green": "#31748f", "yellow": "#f6c177", "peach": "#ebbcba",
+    },
+    "Everforest": {
+        "base": "#2d353b", "mantle": "#272e33", "crust": "#232a2e",
+        "surface0": "#343f44", "surface1": "#3d484d", "overlay0": "#859289",
+        "text": "#d3c6aa", "subtext0": "#9da9a0",
+        "blue": "#7fbbb3", "mauve": "#d699b6", "red": "#e67e80",
+        "green": "#a7c080", "yellow": "#dbbc7f", "peach": "#e69875",
+    },
+    "Kanagawa": {
+        "base": "#1f1f28", "mantle": "#16161d", "crust": "#101014",
+        "surface0": "#2a2a37", "surface1": "#363646", "overlay0": "#54546d",
+        "text": "#dcd7ba", "subtext0": "#c8c093",
+        "blue": "#7e9cd8", "mauve": "#957fb8", "red": "#c34043",
+        "green": "#76946a", "yellow": "#c0a36e", "peach": "#ffa066",
+    },
+    # ── vsFetch palettes ──────────────────────────────────────────────────────
+    "Forest": {
+        "base": "#1e2718", "mantle": "#232d1c", "crust": "#161e11",
+        "surface0": "#2d3d24", "surface1": "#384d2e", "overlay0": "#5a6e4a",
+        "text": "#d5c9a1", "subtext0": "#a89e7a",
+        "blue": "#a7c080", "mauve": "#83c092", "red": "#e67e80",
+        "green": "#83c092", "yellow": "#dbbc7f", "peach": "#e69875",
+    },
+    "Forest Daylight": {
+        "base": "#f2f4e8", "mantle": "#e8ebdc", "crust": "#dce0cf",
+        "surface0": "#c5c9b0", "surface1": "#b2b89c", "overlay0": "#6a7a5a",
+        "text": "#3a4a2a", "subtext0": "#6a7a5a",
+        "blue": "#4a8a3a", "mauve": "#40a02b", "red": "#cc3333",
+        "green": "#40a02b", "yellow": "#c8a020", "peach": "#cc5533",
+    },
+    "Mario": {
+        "base": "#fff8f0", "mantle": "#ffe8d0", "crust": "#ffd8b8",
+        "surface0": "#ffb87a", "surface1": "#ffa060", "overlay0": "#cc5500",
+        "text": "#8b2500", "subtext0": "#cc5500",
+        "blue": "#ff4500", "mauve": "#f44336", "red": "#f44336",
+        "green": "#4caf50", "yellow": "#ff9800", "peach": "#ff6d00",
+    },
+    "Mario Dark": {
+        "base": "#0a0500", "mantle": "#150a00", "crust": "#050200",
+        "surface0": "#3d1a00", "surface1": "#4d2200", "overlay0": "#995500",
+        "text": "#ffe0c0", "subtext0": "#cc9966",
+        "blue": "#ff8c00", "mauve": "#ff3300", "red": "#ff3300",
+        "green": "#66bb00", "yellow": "#ffcc00", "peach": "#ff6600",
+    },
+    "Luigi Dark": {
+        "base": "#0a1a0a", "mantle": "#0f230f", "crust": "#050d05",
+        "surface0": "#1a4a1a", "surface1": "#225522", "overlay0": "#3a7a3a",
+        "text": "#ccffcc", "subtext0": "#88cc88",
+        "blue": "#00cc44", "mauve": "#00ff44", "red": "#ff4400",
+        "green": "#00ff44", "yellow": "#ffcc00", "peach": "#ff8800",
+    },
+    "Vader": {
+        "base": "#050505", "mantle": "#0a0a0a", "crust": "#000000",
+        "surface0": "#1a0000", "surface1": "#220000", "overlay0": "#555555",
+        "text": "#cccccc", "subtext0": "#888888",
+        "blue": "#cc0000", "mauve": "#aa0000", "red": "#cc0000",
+        "green": "#448844", "yellow": "#888800", "peach": "#883300",
+    },
+    "Cyberpunk Neon": {
+        "base": "#0d0221", "mantle": "#130733", "crust": "#080118",
+        "surface0": "#2d0d5e", "surface1": "#3d1a7a", "overlay0": "#7c5cbf",
+        "text": "#e0d7ff", "subtext0": "#b090e0",
+        "blue": "#00e5ff", "mauve": "#b347ff", "red": "#ff1744",
+        "green": "#00ff9f", "yellow": "#ffea00", "peach": "#ff6d00",
+    },
+    "Cyberpunk Yellow": {
+        "base": "#0a0a00", "mantle": "#141400", "crust": "#050500",
+        "surface0": "#333300", "surface1": "#444400", "overlay0": "#888800",
+        "text": "#ffffcc", "subtext0": "#cccc88",
+        "blue": "#f5f500", "mauve": "#aaff00", "red": "#ff2200",
+        "green": "#aaff00", "yellow": "#ff8800", "peach": "#ff5500",
+    },
+    "Anime": {
+        "base": "#fce4ec", "mantle": "#f8bbd0", "crust": "#f3a8c3",
+        "surface0": "#f48fb1", "surface1": "#e879a0", "overlay0": "#c2185b",
+        "text": "#880e4f", "subtext0": "#c2185b",
+        "blue": "#e91e63", "mauve": "#ad1457", "red": "#f44336",
+        "green": "#4caf50", "yellow": "#ff9800", "peach": "#ff5722",
+    },
+    "Aurora Borealis": {
+        "base": "#0a0e14", "mantle": "#0f1923", "crust": "#050810",
+        "surface0": "#1a2a3a", "surface1": "#22384a", "overlay0": "#4a8fa8",
+        "text": "#b3e5fc", "subtext0": "#7ecce8",
+        "blue": "#00bcd4", "mauve": "#4db6ac", "red": "#ef5350",
+        "green": "#4db6ac", "yellow": "#ffd54f", "peach": "#ff8a65",
+    },
+    "Carnage": {
+        "base": "#0d0000", "mantle": "#1a0000", "crust": "#050000",
+        "surface0": "#3d0000", "surface1": "#550000", "overlay0": "#994444",
+        "text": "#ffcccc", "subtext0": "#cc8888",
+        "blue": "#ff3333", "mauve": "#ff0000", "red": "#ff0000",
+        "green": "#66ff66", "yellow": "#ffaa00", "peach": "#ff6600",
+    },
+    "Hello Kitty": {
+        "base": "#fff0f5", "mantle": "#ffe4f0", "crust": "#ffd5e8",
+        "surface0": "#ffb7d5", "surface1": "#ff99c0", "overlay0": "#cc5588",
+        "text": "#8b0045", "subtext0": "#cc5588",
+        "blue": "#ff69b4", "mauve": "#ff1493", "red": "#ff6961",
+        "green": "#77dd77", "yellow": "#fdfd96", "peach": "#ffb347",
+    },
+    "Tux": {
+        "base": "#e8f0f8", "mantle": "#d0e4f5", "crust": "#bdd8f0",
+        "surface0": "#9abcd4", "surface1": "#80a8c4", "overlay0": "#5a8aac",
+        "text": "#1a3a5c", "subtext0": "#5a8aac",
+        "blue": "#2680c2", "mauve": "#1a5fa0", "red": "#c62828",
+        "green": "#2e7d32", "yellow": "#f57f17", "peach": "#e64a19",
+    },
+    "Sand": {
+        "base": "#2a2318", "mantle": "#332b1e", "crust": "#1e1810",
+        "surface0": "#5c4e38", "surface1": "#6e5e46", "overlay0": "#9e8a6e",
+        "text": "#f0e6d3", "subtext0": "#c4b090",
+        "blue": "#d4a843", "mauve": "#cc8822", "red": "#cc4422",
+        "green": "#8aaa44", "yellow": "#cc8822", "peach": "#cc6633",
+    },
+    "Monokai": {
+        "base": "#272822", "mantle": "#1e1f1c", "crust": "#15161a",
+        "surface0": "#3e3d32", "surface1": "#4e4d42", "overlay0": "#75715e",
+        "text": "#f8f8f2", "subtext0": "#cfcfc2",
+        "blue": "#66d9e8", "mauve": "#ae81ff", "red": "#f92672",
+        "green": "#a6e22e", "yellow": "#e6db74", "peach": "#fd971f",
+    },
+    "Solarized Dark": {
+        "base": "#002b36", "mantle": "#073642", "crust": "#00212b",
+        "surface0": "#0d4a5a", "surface1": "#1a5a6a", "overlay0": "#586e75",
+        "text": "#eee8d5", "subtext0": "#93a1a1",
+        "blue": "#268bd2", "mauve": "#6c71c4", "red": "#dc322f",
+        "green": "#859900", "yellow": "#b58900", "peach": "#cb4b16",
+    },
+    "Solarized Light": {
+        "base": "#fdf6e3", "mantle": "#eee8d5", "crust": "#e4ddc8",
+        "surface0": "#d3cbb8", "surface1": "#c4bca8", "overlay0": "#93a1a1",
+        "text": "#586e75", "subtext0": "#93a1a1",
+        "blue": "#268bd2", "mauve": "#6c71c4", "red": "#dc322f",
+        "green": "#859900", "yellow": "#b58900", "peach": "#cb4b16",
+    },
+    "GitHub Dark": {
+        "base": "#0d1117", "mantle": "#161b22", "crust": "#080c12",
+        "surface0": "#30363d", "surface1": "#3d444d", "overlay0": "#8b949e",
+        "text": "#e6edf3", "subtext0": "#b1bac4",
+        "blue": "#58a6ff", "mauve": "#bc8cff", "red": "#f85149",
+        "green": "#3fb950", "yellow": "#d29922", "peach": "#db6d28",
+    },
+    "Ubuntu Dark": {
+        "base": "#1a0800", "mantle": "#2a1000", "crust": "#0d0400",
+        "surface0": "#5c3010", "surface1": "#703c18", "overlay0": "#995520",
+        "text": "#ffe0cc", "subtext0": "#cc9977",
+        "blue": "#e95420", "mauve": "#ff5722", "red": "#ff3300",
+        "green": "#88cc00", "yellow": "#ffaa00", "peach": "#ff7700",
+    },
+    "Ice Mint": {
+        "base": "#e8f8f5", "mantle": "#d5f2eb", "crust": "#c0ece3",
+        "surface0": "#a8dcc9", "surface1": "#90ccb5", "overlay0": "#5a9a84",
+        "text": "#1a4a3a", "subtext0": "#5a9a84",
+        "blue": "#1abc9c", "mauve": "#27ae60", "red": "#e74c3c",
+        "green": "#27ae60", "yellow": "#f39c12", "peach": "#e67e22",
+    },
+    "Retro Paper": {
+        "base": "#1a1510", "mantle": "#221c14", "crust": "#100c08",
+        "surface0": "#3d3020", "surface1": "#4d3c28", "overlay0": "#7a6540",
+        "text": "#e8d5b0", "subtext0": "#b8a580",
+        "blue": "#d4a843", "mauve": "#cc5533", "red": "#cc5533",
+        "green": "#8aaa44", "yellow": "#d4a843", "peach": "#cc6633",
+    },
+    "Nord Light": {
+        "base": "#eceff4", "mantle": "#e5e9f0", "crust": "#d8dee9",
+        "surface0": "#d8dee9", "surface1": "#ccd3e0", "overlay0": "#616e88",
+        "text": "#2e3440", "subtext0": "#616e88",
+        "blue": "#5e81ac", "mauve": "#b48ead", "red": "#bf616a",
+        "green": "#4c7a34", "yellow": "#8b6914", "peach": "#8b4000",
+    },
+    "Gruvbox Light": {
+        "base": "#fbf1c7", "mantle": "#f2e5bc", "crust": "#e8d8ac",
+        "surface0": "#d5c4a1", "surface1": "#c4b090", "overlay0": "#7c6f64",
+        "text": "#3c3836", "subtext0": "#7c6f64",
+        "blue": "#458588", "mauve": "#b16286", "red": "#cc241d",
+        "green": "#79740e", "yellow": "#d79921", "peach": "#d65d0e",
+    },
+}
+
+# ── templates ─────────────────────────────────────────────────────────────────
+
+def _tpl(palette, bar_style="bar", zone_radius=0, border_width=0,
+         height=42, spacing=10, mod_padding=8,
+         ws_color1=None, ws_color2=None, ws_radius=5,
+         logo_glyph="󰣇", logo_size=20, logo_color=None):
+    css = _PALETTES[palette]
+    return {
+        "palette":      palette,
+        "css":          css,
+        "bar-style":    bar_style,
+        "zone-radius":  zone_radius,
+        "border-width": border_width,
+        "height":       height,
+        "spacing":      spacing,
+        "mod-padding":  mod_padding,
+        "ws-color-1":   ws_color1 or css["blue"],
+        "ws-color-2":   ws_color2 or css["mauve"],
+        "ws-radius":    ws_radius,
+        "logo-glyph":   logo_glyph,
+        "logo-size":    logo_size,
+        "logo-color":   logo_color or css["text"],
+    }
+
+_TEMPLATES = [
+    # ── Catppuccin Mocha ──────────────────────────────────────────────────────
+    ("Catppuccin Mocha · Bar",
+        _tpl("Catppuccin Mocha", "bar",     zone_radius=0,  height=42, spacing=10, mod_padding=8,  ws_radius=5,  logo_glyph="󰣇", logo_size=20, logo_color="#cdd6f4")),
+    ("Catppuccin Mocha · Islands",
+        _tpl("Catppuccin Mocha", "islands", zone_radius=16, height=44, spacing=12, mod_padding=10, ws_radius=10, logo_glyph="󰣇", logo_size=20, logo_color="#cba6f7")),
+    ("Catppuccin Mocha · Modules",
+        _tpl("Catppuccin Mocha", "modules", zone_radius=20, height=46, spacing=6,  mod_padding=12, ws_radius=20, logo_glyph="󰣇", logo_size=20, logo_color="#cba6f7")),
+    # ── Forest Night ──────────────────────────────────────────────────────────
+    ("Forest Night · Bar",
+        _tpl("Forest Night",     "bar",     zone_radius=0,  height=42, spacing=10, mod_padding=8,  ws_radius=5,  logo_glyph="󰣇", logo_size=20, logo_color="#abd290")),
+    ("Forest Night · Islands",
+        _tpl("Forest Night",     "islands", zone_radius=12, height=44, spacing=10, mod_padding=8,  ws_radius=8,  logo_glyph="󰣇", logo_size=20, logo_color="#a0cfcf")),
+    ("Forest Night · Modules",
+        _tpl("Forest Night",     "modules", zone_radius=18, height=46, spacing=6,  mod_padding=12, ws_radius=18, logo_glyph="󰣇", logo_size=20, logo_color="#abd290")),
+    # ── Catppuccin Latte ──────────────────────────────────────────────────────
+    ("Catppuccin Latte · Bar",
+        _tpl("Catppuccin Latte", "bar",     zone_radius=0,  height=42, spacing=10, mod_padding=8,  ws_radius=5,  logo_glyph="󰣇", logo_size=20, logo_color="#4c4f69")),
+    ("Catppuccin Latte · Islands",
+        _tpl("Catppuccin Latte", "islands", zone_radius=14, height=44, spacing=12, mod_padding=10, ws_radius=8,  logo_glyph="󰣇", logo_size=20, logo_color="#8839ef")),
+    ("Catppuccin Latte · Modules",
+        _tpl("Catppuccin Latte", "modules", zone_radius=20, height=46, spacing=6,  mod_padding=12, ws_radius=20, logo_glyph="󰣇", logo_size=20, logo_color="#8839ef")),
+    # ── Catppuccin Macchiato ──────────────────────────────────────────────────
+    ("Catppuccin Macchiato · Islands",
+        _tpl("Catppuccin Macchiato", "islands", zone_radius=16, height=44, spacing=12, mod_padding=10, ws_radius=12, logo_glyph="󰣇", logo_size=20, logo_color="#c6a0f6")),
+    # ── Catppuccin Frappe ─────────────────────────────────────────────────────
+    ("Catppuccin Frappe · Bar",
+        _tpl("Catppuccin Frappe", "bar",    zone_radius=0,  height=42, spacing=10, mod_padding=8,  ws_radius=5,  logo_glyph="󰣇", logo_size=20, logo_color="#ca9ee6")),
+    # ── Dracula ───────────────────────────────────────────────────────────────
+    ("Dracula · Bar",
+        _tpl("Dracula",          "bar",     zone_radius=0,  height=42, spacing=10, mod_padding=8,  ws_radius=3,  logo_glyph="󱘋", logo_size=20, logo_color="#bd93f9")),
+    ("Dracula · Islands",
+        _tpl("Dracula",          "islands", zone_radius=20, height=46, spacing=12, mod_padding=10, ws_radius=15, logo_glyph="󱘋", logo_size=22, logo_color="#bd93f9")),
+    ("Dracula · Modules",
+        _tpl("Dracula",          "modules", zone_radius=20, height=46, spacing=6,  mod_padding=12, ws_radius=20, logo_glyph="󱘋", logo_size=22, logo_color="#ff79c6")),
+    # ── Nord ──────────────────────────────────────────────────────────────────
+    ("Nord · Bar",
+        _tpl("Nord",             "bar",     zone_radius=0,  height=42, spacing=10, mod_padding=8,  ws_radius=5,  logo_glyph="", logo_size=20, logo_color="#88c0d0")),
+    ("Nord · Islands",
+        _tpl("Nord",             "islands", zone_radius=10, height=44, spacing=10, mod_padding=8,  ws_radius=6,  logo_glyph="", logo_size=20, logo_color="#d8dee9")),
+    ("Nord · Modules",
+        _tpl("Nord",             "modules", zone_radius=14, height=46, spacing=6,  mod_padding=12, ws_radius=14, logo_glyph="", logo_size=20, logo_color="#88c0d0")),
+    # ── Tokyo Night ───────────────────────────────────────────────────────────
+    ("Tokyo Night · Bar",
+        _tpl("Tokyo Night",      "bar",     zone_radius=0,  height=42, spacing=10, mod_padding=8,  ws_radius=5,  logo_glyph="󱄅", logo_size=20, logo_color="#7aa2f7")),
+    ("Tokyo Night · Islands",
+        _tpl("Tokyo Night",      "islands", zone_radius=18, height=46, spacing=12, mod_padding=10, ws_radius=12, logo_glyph="󱄅", logo_size=22, logo_color="#bb9af7")),
+    ("Tokyo Night · Modules",
+        _tpl("Tokyo Night",      "modules", zone_radius=20, height=46, spacing=6,  mod_padding=12, ws_radius=20, logo_glyph="󱄅", logo_size=22, logo_color="#7aa2f7")),
+    # ── Gruvbox ───────────────────────────────────────────────────────────────
+    ("Gruvbox · Bar",
+        _tpl("Gruvbox Dark",     "bar",     zone_radius=0,  height=42, spacing=10, mod_padding=8,  ws_radius=4,  logo_glyph="󱘊", logo_size=20, logo_color="#fabd2f")),
+    ("Gruvbox · Modules",
+        _tpl("Gruvbox Dark",     "modules", zone_radius=6,  height=46, spacing=6,  mod_padding=12, ws_radius=6,  logo_glyph="󱘊", logo_size=20, logo_color="#fabd2f")),
+    # ── One Dark ──────────────────────────────────────────────────────────────
+    ("One Dark · Islands",
+        _tpl("One Dark",         "islands", zone_radius=12, height=44, spacing=10, mod_padding=8,  ws_radius=8,  logo_glyph="",  logo_size=22, logo_color="#c678dd")),
+    # ── Rosé Pine ─────────────────────────────────────────────────────────────
+    ("Rosé Pine · Bar",
+        _tpl("Rosé Pine",        "bar",     zone_radius=0,  height=42, spacing=10, mod_padding=8,  ws_radius=5,  logo_glyph="󰣇", logo_size=20, logo_color="#c4a7e7")),
+    # ── Everforest ────────────────────────────────────────────────────────────
+    ("Everforest · Islands",
+        _tpl("Everforest",       "islands", zone_radius=14, height=44, spacing=10, mod_padding=8,  ws_radius=10, logo_glyph="󰣇", logo_size=20, logo_color="#a7c080")),
+    # ── Kanagawa ──────────────────────────────────────────────────────────────
+    ("Kanagawa · Bar",
+        _tpl("Kanagawa",         "bar",     zone_radius=0,  height=42, spacing=10, mod_padding=8,  ws_radius=5,  logo_glyph="󰣇", logo_size=20, logo_color="#7e9cd8")),
+    # ── vsFetch ───────────────────────────────────────────────────────────────
+    ("Forest · Bar",
+        _tpl("Forest",           "bar",     zone_radius=0,  height=42, spacing=10, mod_padding=8,  ws_radius=5,  logo_glyph="󰣇", logo_size=20, logo_color="#a7c080")),
+    ("Forest · Islands",
+        _tpl("Forest",           "islands", zone_radius=12, height=44, spacing=10, mod_padding=8,  ws_radius=8,  logo_glyph="󰣇", logo_size=20, logo_color="#83c092")),
+    ("Forest Daylight · Bar",
+        _tpl("Forest Daylight",  "bar",     zone_radius=0,  height=42, spacing=10, mod_padding=8,  ws_radius=5,  logo_glyph="󰣇", logo_size=20, logo_color="#4a8a3a")),
+    ("Mario · Bar",
+        _tpl("Mario",            "bar",     zone_radius=0,  height=42, spacing=10, mod_padding=8,  ws_radius=4,  logo_glyph="󰕈", logo_size=20, logo_color="#8b2500")),
+    ("Mario Dark · Islands",
+        _tpl("Mario Dark",       "islands", zone_radius=14, height=44, spacing=10, mod_padding=8,  ws_radius=8,  logo_glyph="󰕈", logo_size=20, logo_color="#ff8c00")),
+    ("Luigi Dark · Islands",
+        _tpl("Luigi Dark",       "islands", zone_radius=14, height=44, spacing=10, mod_padding=8,  ws_radius=10, logo_glyph="󰣛", logo_size=20, logo_color="#00cc44")),
+    ("Vader · Bar",
+        _tpl("Vader",            "bar",     zone_radius=0,  height=42, spacing=10, mod_padding=8,  ws_radius=3,  logo_glyph="󰣇", logo_size=22, logo_color="#cc0000")),
+    ("Vader · Islands",
+        _tpl("Vader",            "islands", zone_radius=20, height=46, spacing=10, mod_padding=10, ws_radius=5,  logo_glyph="󰣇", logo_size=22, logo_color="#cc0000")),
+    ("Cyberpunk Neon · Islands",
+        _tpl("Cyberpunk Neon",   "islands", zone_radius=20, height=46, spacing=12, mod_padding=10, ws_radius=15, logo_glyph="󰣇", logo_size=22, logo_color="#00e5ff")),
+    ("Cyberpunk Neon · Modules",
+        _tpl("Cyberpunk Neon",   "modules", zone_radius=0,  height=48, spacing=4,  mod_padding=14, ws_radius=0,  border_width=1, logo_glyph="󰣇", logo_size=22, logo_color="#ff00ff")),
+    ("Cyberpunk Yellow · Bar",
+        _tpl("Cyberpunk Yellow", "bar",     zone_radius=0,  height=42, spacing=10, mod_padding=8,  ws_radius=3,  logo_glyph="󰣇", logo_size=20, logo_color="#f5f500")),
+    ("Aurora Borealis · Islands",
+        _tpl("Aurora Borealis",  "islands", zone_radius=18, height=46, spacing=12, mod_padding=10, ws_radius=12, logo_glyph="󱄅", logo_size=22, logo_color="#00bcd4")),
+    ("Aurora Borealis · Modules",
+        _tpl("Aurora Borealis",  "modules", zone_radius=20, height=46, spacing=6,  mod_padding=12, ws_radius=20, logo_glyph="󱄅", logo_size=22, logo_color="#26c6da")),
+    ("Carnage · Bar",
+        _tpl("Carnage",          "bar",     zone_radius=0,  height=42, spacing=10, mod_padding=8,  ws_radius=3,  logo_glyph="󱘋", logo_size=20, logo_color="#ff3333")),
+    ("Anime · Bar",
+        _tpl("Anime",            "bar",     zone_radius=0,  height=42, spacing=10, mod_padding=8,  ws_radius=5,  logo_glyph="󰣇", logo_size=20, logo_color="#880e4f")),
+    ("Hello Kitty · Islands",
+        _tpl("Hello Kitty",      "islands", zone_radius=20, height=44, spacing=12, mod_padding=10, ws_radius=15, logo_glyph="󰣇", logo_size=20, logo_color="#ff69b4")),
+    ("Tux · Bar",
+        _tpl("Tux",              "bar",     zone_radius=0,  height=42, spacing=10, mod_padding=8,  ws_radius=5,  logo_glyph="󰣇", logo_size=20, logo_color="#2680c2")),
+    ("Sand · Bar",
+        _tpl("Sand",             "bar",     zone_radius=0,  height=42, spacing=10, mod_padding=8,  ws_radius=4,  logo_glyph="󰣇", logo_size=20, logo_color="#d4a843")),
+    ("Monokai · Bar",
+        _tpl("Monokai",          "bar",     zone_radius=0,  height=42, spacing=10, mod_padding=8,  ws_radius=5,  logo_glyph="󰣇", logo_size=20, logo_color="#fd971f")),
+    ("Monokai · Islands",
+        _tpl("Monokai",          "islands", zone_radius=12, height=44, spacing=10, mod_padding=8,  ws_radius=8,  logo_glyph="󰣇", logo_size=20, logo_color="#ae81ff")),
+    ("Monokai · Modules",
+        _tpl("Monokai",          "modules", zone_radius=8,  height=46, spacing=6,  mod_padding=12, ws_radius=8,  logo_glyph="󰣇", logo_size=20, logo_color="#fd971f")),
+    ("Solarized Dark · Bar",
+        _tpl("Solarized Dark",   "bar",     zone_radius=0,  height=42, spacing=10, mod_padding=8,  ws_radius=5,  logo_glyph="󰣇", logo_size=20, logo_color="#268bd2")),
+    ("Solarized Light · Bar",
+        _tpl("Solarized Light",  "bar",     zone_radius=0,  height=42, spacing=10, mod_padding=8,  ws_radius=5,  logo_glyph="󰣇", logo_size=20, logo_color="#268bd2")),
+    ("GitHub Dark · Bar",
+        _tpl("GitHub Dark",      "bar",     zone_radius=0,  height=42, spacing=10, mod_padding=8,  ws_radius=5,  logo_glyph="󰣇", logo_size=20, logo_color="#58a6ff")),
+    ("Ubuntu Dark · Islands",
+        _tpl("Ubuntu Dark",      "islands", zone_radius=14, height=44, spacing=10, mod_padding=8,  ws_radius=8,  logo_glyph="󰕈", logo_size=22, logo_color="#e95420")),
+    ("Ice Mint · Bar",
+        _tpl("Ice Mint",         "bar",     zone_radius=0,  height=42, spacing=10, mod_padding=8,  ws_radius=5,  logo_glyph="󰣭", logo_size=20, logo_color="#1abc9c")),
+    ("Retro Paper · Bar",
+        _tpl("Retro Paper",      "bar",     zone_radius=0,  height=42, spacing=10, mod_padding=8,  ws_radius=4,  logo_glyph="󰣇", logo_size=20, logo_color="#d4a843")),
+    ("Nord Light · Bar",
+        _tpl("Nord Light",       "bar",     zone_radius=0,  height=42, spacing=10, mod_padding=8,  ws_radius=5,  logo_glyph="",  logo_size=20, logo_color="#2e3440")),
+    ("Gruvbox Light · Bar",
+        _tpl("Gruvbox Light",    "bar",     zone_radius=0,  height=42, spacing=10, mod_padding=8,  ws_radius=5,  logo_glyph="󱘊", logo_size=20, logo_color="#3c3836")),
+]
+
+CSS_COLOR_DEFAULTS = {
+    "base":     "#11140e",
+    "mantle":   "#43483e",
+    "crust":    "#11140e",
+    "surface0": "#1d211a",
+    "surface1": "#282b24",
+    "overlay0": "#33362f",
+    "text":     "#e1e4d9",
+    "subtext0": "#c4c8bb",
+    "blue":     "#abd290",
+    "mauve":    "#abd290",
+    "red":      "#ffb4ab",
+    "green":    "#a0cfcf",
+    "yellow":   "#3e4a35",
+    "peach":    "#1e4e4e",
+}
+
+ALL_MODULES = [
+    # Hyprland
+    "hyprland/workspaces", "hyprland/window",
+    # System
+    "clock", "cpu", "memory", "temperature", "disk",
+    "network", "bluetooth", "pulseaudio", "wireplumber",
+    "battery", "backlight", "idle_inhibitor",
+    # Media / misc
+    "mpris", "privacy", "tray", "wlr/taskbar",
+    # Custom
+    "custom/arch", "custom/weather", "custom/updates",
+    "custom/swaync", "custom/power",
+]
+
+MOD_SAMPLE = {
+    "hyprland/workspaces": None,
+    "hyprland/window":     "vsWaybar Studio",
+    "clock":               "  11:48  |  Fri 20 Mar",
+    "cpu":                 "󰍛 5%",
+    "memory":              "󰾆 5.1G",
+    "temperature":         " 45°C",
+    "disk":                "󰋊 42%",
+    "network":             "󰈀 192.168.1.1",
+    "bluetooth":           "󰂯",
+    "pulseaudio":          "󰕾 60%",
+    "wireplumber":         "󰕾 60%",
+    "battery":             "󰁹 93%",
+    "backlight":           "󰃠 80%",
+    "idle_inhibitor":      "󰾪",
+    "mpris":               "󰝚 Song title",
+    "privacy":             "󰒅",
+    "tray":                "󱊫",
+    "notifd":              "󰂚",
+    "wlr/taskbar":         "󰖯",
+    "custom/arch":         "󰣇",
+    "custom/weather":      "󰖙 24°C",
+    "custom/updates":      "󰚰 5",
+    "custom/swaync":       "󰂚",
+    "custom/power":        "⏻",
+}
+
+MODULE_LABELS = {
+    "hyprland/workspaces": ("󰕰", "Workspaces"),
+    "hyprland/window":     ("󰖯", "Window"),
+    "clock":               ("󰥔", "Clock"),
+    "cpu":                 ("󰍛", "CPU"),
+    "memory":              ("󰾆", "Memory"),
+    "temperature":         ("󰔐", "Temperature"),
+    "disk":                ("󰋊", "Disk"),
+    "network":             ("󰖩", "Network"),
+    "bluetooth":           ("󰂯", "Bluetooth"),
+    "pulseaudio":          ("󰕾", "Audio"),
+    "wireplumber":         ("󰕾", "Wireplumber"),
+    "battery":             ("󰁹", "Battery"),
+    "backlight":           ("󰃠", "Backlight"),
+    "idle_inhibitor":      ("󰾪", "Idle Inhibitor"),
+    "mpris":               ("󰝚", "MPRIS"),
+    "privacy":             ("󰒅", "Privacy"),
+    "tray":                ("󱊫", "Tray"),
+    "wlr/taskbar":         ("󰖯", "Taskbar"),
+    "notifd":              ("󰂚", "Notifd"),
+    "custom/arch":         ("󰣇", "Logo"),
+    "custom/weather":      ("󰖙", "Weather"),
+    "custom/updates":      ("󰚰", "Updates"),
+    "custom/swaync":       ("󰂚", "Notifs"),
+    "custom/power":        ("⏻", "Power"),
+}
+
+MODULE_DEFAULTS = {
+    "clock": {
+        "format":          "{:%H:%M  |  %A %d %B}",
+        "tooltip-format":  "",
+        "timezone":        "America/Monterrey",
+        "locale":          "es_MX.utf8",
+        "interval":        1,
+        "on-click":        "flatpak run com.ml4w.calendar",
+        "on-click-right":  "",
+        "on-click-middle": "",
+        "tooltip":         True,
+    },
+    "cpu": {
+        "format":   "󰍛 {usage}%",
+        "interval": 2,
+        "tooltip":  True,
+    },
+    "memory": {
+        "format":         "󰾆 {used:0.1f}G",
+        "tooltip-format": "RAM: {used:0.1f}G / {total:0.1f}G\nSwap: {swapUsed:0.1f}G / {swapTotal:0.1f}G",
+        "interval":       5,
+    },
+    "network": {
+        "format-wifi":        "󰖩 {signalStrength}%",
+        "format-ethernet":    "󰈀 {ipaddr}",
+        "format-disconnected":"󰖪 Disconnected",
+        "tooltip-format":     "{ifname}: {ipaddr}/{cidr}\n{essid} ({signalStrength}%)\n↑ {bandwidthUpBits}  ↓ {bandwidthDownBits}",
+        "on-click":           "nm-connection-editor",
+        "interval":           5,
+    },
+    "pulseaudio": {
+        "format":       "{icon} {volume}%",
+        "format-muted": "󰝟 mute",
+        "on-click":     "pavucontrol",
+        "scroll-step":  5,
+    },
+    "battery": {
+        "format":          "{icon} {capacity}%",
+        "format-charging": "󰂄 {capacity}%",
+        "format-plugged":  "󰚥 {capacity}%",
+        "states.warning":  30,
+        "states.critical": 15,
+    },
+    "tray": {
+        "spacing":   8,
+        "icon-size": 18,
+    },
+    "hyprland/workspaces": {
+        "format":          "{id}",
+        "on-scroll-up":    "hyprctl dispatch workspace e-1",
+        "on-scroll-down":  "hyprctl dispatch workspace e+1",
+        "anim-color-1":    "#89b4fa",
+        "anim-color-2":    "#cba6f7",
+        "anim-duration":   3,
+        "button-radius":   5,
+        "button-pad-v":    0,
+        "button-pad-h":    4,
+        "button-minw":     35,
+    },
+    "hyprland/window": {
+        "format":           "{}",
+        "max-length":       45,
+        "separate-outputs": True,
+    },
+    "custom/arch": {
+        "format":          "<span font='JetBrainsMono Nerd Font Mono 20' color='#ffffff'>󰣇</span>",
+        "on-click":        "$HOME/.local/bin/vsfetch",
+        "tooltip":         False,
+        "arch-icon-size":  20,
+        "arch-icon-color": "#ffffff",
+        "arch-icon-glyph": "󰣇",
+        "arch-pad-left":   15,
+        "arch-pad-right":  10,
+    },
+    "custom/weather": {
+        "exec":     "$HOME/.config/waybar/scripts/weather.py",
+        "on-click": "flatpak run io.github.amit9838.mousam",
+        "interval": 3600,
+        "tooltip":  True,
+    },
+    "custom/swaync": {
+        "exec":           "swaync-client -swb",
+        "exec-if":        "which swaync-client",
+        "on-click":       "swaync-client -t -sw",
+        "on-click-right": "swaync-client -d -sw",
+        "escape":         True,
+    },
+    "custom/updates": {
+        "exec":     "count=$(checkupdates 2>/dev/null | wc -l); [ \"$count\" -gt 0 ] && echo '{\"text\":\"󰚰 '\"$count\"'\",\"class\":\"pending\"}' || echo '{\"text\":\"󰚰 0\",\"class\":\"updated\"}'",
+        "on-click": "kitty --class floating-terminal -e ~/.config/hypr/scripts/install-updates.sh",
+        "interval": 60,
+        "tooltip":  False,
+    },
+    "custom/power": {
+        "format":   "⏻",
+        "on-click": "wlogout -b 3 -c 20 -r 20 -L 400 -R 400 -T 200 -B 200 --protocol layer-shell",
+        "tooltip":  False,
+    },
+    "bluetooth": {
+        "format":           "󰂯",
+        "format-disabled":  "󰂲",
+        "format-connected": "󰂱 {device_alias}",
+        "on-click":         "/usr/bin/blueman-manager",
+        "interval":         30,
+        "tooltip":          True,
+    },
+    "temperature": {
+        "format":            " {temperatureC}°C",
+        "critical-threshold": 80,
+        "format-critical":   " {temperatureC}°C",
+        "interval":          5,
+        "tooltip":           True,
+    },
+    "disk": {
+        "format":   "<span font='JetBrainsMono Nerd Font Mono 12'>󰋊</span> {percentage_used}%",
+        "path":     "/",
+        "interval": 30,
+        "tooltip":  True,
+    },
+    "backlight": {
+        "format":       "{icon} {percent}%",
+        "format-icons": ["󰃞", "󰃟", "󰃠"],
+        "on-scroll-up":   "brightnessctl set 5%+",
+        "on-scroll-down": "brightnessctl set 5%-",
+    },
+    "idle_inhibitor": {
+        "format":          "<span font='JetBrainsMono Nerd Font Mono 12'>{icon}</span>",
+        "format-icons": {
+            "activated":   "󰾪",
+            "deactivated": "󰾩",
+        },
+    },
+    "mpris": {
+        "format":        "{player_icon} {title}",
+        "format-paused": "{player_icon}  {title}",
+        "player-icons":  {"default": "▶", "spotify": "󰓇", "firefox": "󰈹"},
+        "status-icons":  {"paused": ""},
+        "interval":      1,
+        "max-length":    40,
+    },
+    "wireplumber": {
+        "format":       "<span font='JetBrainsMono Nerd Font Mono 12'>󰕾</span> {volume}%",
+        "format-muted": "<span font='JetBrainsMono Nerd Font Mono 12'>󰝟</span> mute",
+        "on-click":     "pavucontrol",
+        "scroll-step":  5,
+    },
+    "privacy": {
+        "icon-spacing": 4,
+        "icon-size":    18,
+        "transition-duration": 250,
+    },
+    "notifd": {
+        "format":         "<span font='JetBrainsMono Nerd Font Mono 12'>󰂚</span> {count}",
+        "on-click":       "swaync-client -t -sw",
+        "on-click-right": "swaync-client -d -sw",
+        "tooltip":        False,
+    },
+    "wlr/taskbar": {
+        "format":           "{icon}",
+        "icon-size":        18,
+        "tooltip":          True,
+        "on-click":         "activate",
+        "on-click-middle":  "close",
+    },
+}
+
+# ── editor themes ─────────────────────────────────────────────────────────────
+
+# Catppuccin Mocha (dark)
+THEME_DARK = {
+    "bg":      "#1e1e2e",   # base
+    "hdr":     "#181825",   # mantle
+    "brd":     "#313244",   # surface0
+    "txt":     "#cdd6f4",   # text
+    "dim":     "#a6adc8",   # subtext0
+    "mid":     "#89b4fa",   # blue
+    "acc":     "#cba4f7",   # mauve
+    "acc_rgb": "203,164,247",
+    "save_fg": "#1e1e2e",
+}
+
+# Catppuccin Latte (light)
+THEME_LIGHT = {
+    "bg":      "#eff1f5",   # base
+    "hdr":     "#e6e9ef",   # mantle
+    "brd":     "#ccd0da",   # surface0
+    "txt":     "#4c4f69",   # text
+    "dim":     "#6c6f85",   # subtext0
+    "mid":     "#1e66f5",   # blue
+    "acc":     "#8839ef",   # mauve
+    "acc_rgb": "136,57,239",
+    "save_fg": "#eff1f5",
+}
+
+# ── CSS builder ───────────────────────────────────────────────────────────────
+
+def _build_css(t: dict) -> bytes:
+    return f"""
+* {{ font-family: "JetBrainsMono Nerd Font", monospace; }}
+window {{ background-color: {t['bg']}; }}
+
+.app-header {{
+    background-color: {t['hdr']};
+    border-bottom: 1px solid {t['brd']};
+    padding: 14px 20px;
+}}
+.app-title {{ color: {t['txt']}; font-size: 18px; font-weight: bold; }}
+.app-path  {{ color: {t['dim']}; font-size: 12px; }}
+
+notebook {{ background-color: {t['bg']}; }}
+notebook > header.left {{
+    background-color: {t['hdr']};
+    border-right: 1px solid {t['brd']};
+    padding: 8px 0;
+}}
+notebook > header > tabs > tab {{
+    background-color: transparent;
+    color: {t['dim']};
+    font-size: 14px;
+    padding: 10px 20px 10px 16px;
+    border: none;
+    border-left: 3px solid transparent;
+    border-radius: 0;
+    min-width: 120px;
+}}
+notebook > header > tabs > tab:checked {{
+    background-color: {t['bg']};
+    color: {t['acc']};
+    border-left-color: {t['acc']};
+}}
+notebook > header > tabs > tab:hover:not(:checked) {{
+    color: {t['txt']};
+    background-color: rgba({t['acc_rgb']}, 0.07);
+}}
+
+.page-scroll {{ background-color: {t['bg']}; }}
+.section-title {{
+    color: {t['acc']};
+    font-size: 11px;
+    font-weight: bold;
+    letter-spacing: 1px;
+    margin-top: 18px;
+    margin-bottom: 6px;
+}}
+.field-label  {{ color: {t['dim']}; font-size: 13px; }}
+.color-key    {{ color: {t['mid']}; font-size: 13px; font-family: monospace; }}
+.hint-label   {{ color: {t['dim']}; font-size: 12px; font-style: italic; }}
+.module-title {{ color: {t['txt']}; font-size: 15px; font-weight: bold; }}
+
+entry, spinbutton {{
+    background-color: {t['hdr']};
+    color: {t['txt']};
+    border: 1px solid {t['brd']};
+    border-radius: 5px;
+    padding: 5px 10px;
+    caret-color: {t['acc']};
+    box-shadow: none;
+}}
+entry:focus, spinbutton:focus {{ border-color: {t['acc']}; }}
+
+combobox button {{
+    background-color: {t['hdr']};
+    color: {t['txt']};
+    border: 1px solid {t['brd']};
+    border-radius: 5px;
+    padding: 5px 8px;
+    box-shadow: none;
+}}
+combobox button:hover {{ border-color: {t['acc']}; }}
+
+button {{
+    background-color: {t['hdr']};
+    color: {t['txt']};
+    border: 1px solid {t['brd']};
+    border-radius: 5px;
+    padding: 5px 14px;
+    box-shadow: none;
+}}
+button:hover {{ border-color: {t['acc']}; color: {t['acc']}; }}
+
+.save-btn {{
+    background-color: {t['acc']};
+    color: {t['save_fg']};
+    border: none;
+    border-radius: 6px;
+    padding: 6px 22px;
+    font-weight: bold;
+    font-size: 14px;
+}}
+.save-btn:hover {{ background-color: rgba({t['acc_rgb']}, 0.8); }}
+
+.open-btn {{
+    background-color: transparent;
+    color: {t['dim']};
+    border: 1px solid {t['brd']};
+}}
+.open-btn:hover {{ color: {t['acc']}; border-color: {t['acc']}; }}
+
+.theme-btn {{
+    background-color: transparent;
+    color: {t['dim']};
+    border: 1px solid {t['brd']};
+    border-radius: 5px;
+    padding: 5px 10px;
+    font-size: 13px;
+}}
+.theme-btn:hover {{ color: {t['acc']}; border-color: {t['acc']}; }}
+
+switch {{ background-color: {t['brd']}; border-radius: 12px; min-width: 42px; }}
+switch slider {{ background-color: {t['dim']}; border-radius: 10px; }}
+switch:checked {{ background-color: {t['acc']}; }}
+switch:checked slider {{ background-color: {t['save_fg']}; }}
+
+textview, textview text {{
+    background-color: {t['hdr']};
+    color: {t['txt']};
+}}
+textview {{
+    border: 1px solid {t['brd']};
+    border-radius: 5px;
+    padding: 4px;
+}}
+
+separator {{ background-color: {t['brd']}; min-height: 1px; margin: 4px 0; }}
+
+.status-bar {{
+    background-color: {t['hdr']};
+    border-top: 1px solid {t['brd']};
+    padding: 7px 20px;
+}}
+.status-ok   {{ color: {t['acc']}; font-size: 13px; }}
+.status-hint {{ color: {t['dim']}; font-size: 12px; }}
+
+.zone-header {{
+    background-color: {t['hdr']};
+    border-bottom: 1px solid {t['brd']};
+    padding: 6px 12px;
+}}
+
+.preview-strip {{
+    background-color: {t['hdr']};
+    border-bottom: 1px solid {t['brd']};
+    padding: 6px 10px;
+}}
+""".encode()
+
+# ── helpers ───────────────────────────────────────────────────────────────────
+
+def _hex_to_rgba(h: str) -> Gdk.RGBA:
+    h = h.lstrip("#")
+    c = Gdk.RGBA()
+    c.red   = int(h[0:2], 16) / 255
+    c.green = int(h[2:4], 16) / 255
+    c.blue  = int(h[4:6], 16) / 255
+    c.alpha = 1.0
+    return c
+
+def _rgba_to_hex(c: Gdk.RGBA) -> str:
+    return "#{:02x}{:02x}{:02x}".format(
+        round(c.red * 255), round(c.green * 255), round(c.blue * 255)
+    )
+
+_DISTRO_ICONS = [
+    ("Arch Linux",   "󰣇"),
+    ("Ubuntu",       "󰕈"),
+    ("Debian",       "󰣚"),
+    ("Fedora",       "󰣛"),
+    ("NixOS",        "󱄅"),
+    ("Manjaro",      "󱘊"),
+    ("openSUSE",     "󰮤"),
+    ("Gentoo",       "󰣨"),
+    ("Mint",         "󰣭"),
+    ("EndeavourOS",  ""),
+    ("Garuda",       "󱘋"),
+    ("Pop!_OS",      ""),
+    ("Custom",       ""),   # sentinel — user types glyph
+]
+
+_DEFAULT_LAYOUT = {
+    "modules-left":   ["custom/arch", "hyprland/workspaces", "hyprland/window"],
+    "modules-center": ["custom/weather", "clock"],
+    "modules-right":  ["tray", "custom/updates", "pulseaudio", "network",
+                       "memory", "cpu", "custom/swaync", "custom/power"],
+}
+
+_MATUGEN_MAP = {
+    "base":     "background",
+    "mantle":   "surface_container_lowest",
+    "crust":    "surface_container",
+    "surface0": "surface_container_low",
+    "surface1": "surface_container_high",
+    "overlay0": "surface_variant",
+    "text":     "on_surface",
+    "subtext0": "on_surface_variant",
+    "blue":     "primary",
+    "mauve":    "secondary",
+    "red":      "error",
+    "green":    "tertiary",
+    "yellow":   "primary_fixed",
+    "peach":    "secondary_fixed",
+}
+
+def _file_chooser(parent, title, mime_types=None) -> str | None:
+    dlg = Gtk.FileChooserDialog(
+        title=title, parent=parent,
+        action=Gtk.FileChooserAction.OPEN,
+        buttons=("Cancel", Gtk.ResponseType.CANCEL, "Open", Gtk.ResponseType.OK),
+    )
+    if mime_types:
+        ff = Gtk.FileFilter()
+        ff.set_name("Allowed files")
+        for m in mime_types:
+            ff.add_mime_type(m)
+        dlg.add_filter(ff)
+    path = dlg.get_filename() if dlg.run() == Gtk.ResponseType.OK else None
+    dlg.destroy()
+    return path
+
+def _lbl(text: str, style: str = "field-label", xalign: float = 0.0) -> Gtk.Label:
+    w = Gtk.Label(label=text)
+    w.set_xalign(xalign)
+    w.get_style_context().add_class(style)
+    return w
+
+def _section(text: str) -> Gtk.Label:
+    return _lbl(text.upper(), "section-title")
+
+def _hint(text: str) -> Gtk.Label:
+    l = _lbl(text, "hint-label")
+    l.set_margin_bottom(6)
+    return l
+
+def _color_btn(hex_color: str) -> Gtk.ColorButton:
+    btn = Gtk.ColorButton()
+    btn.set_rgba(_hex_to_rgba(hex_color))
+    btn.set_title("Select color")
+    return btn
+
+def _spin(value, lo, hi, step=1, digits=0) -> Gtk.SpinButton:
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        value = lo
+    adj = Gtk.Adjustment(value=value, lower=lo, upper=hi,
+                         step_increment=step, page_increment=step * 10)
+    sb = Gtk.SpinButton(adjustment=adj, digits=digits)
+    sb.set_numeric(True)
+    return sb
+
+def _combo(options: list, active: str) -> Gtk.ComboBoxText:
+    cb = Gtk.ComboBoxText()
+    for o in options:
+        cb.append_text(o)
+    try:
+        cb.set_active(options.index(str(active)))
+    except ValueError:
+        cb.set_active(0)
+    return cb
+
+def _scrolled(child: Gtk.Widget, hpol=Gtk.PolicyType.NEVER) -> Gtk.ScrolledWindow:
+    sw = Gtk.ScrolledWindow()
+    sw.set_policy(hpol, Gtk.PolicyType.AUTOMATIC)
+    sw.get_style_context().add_class("page-scroll")
+    sw.add(child)
+    return sw
+
+def _row(label: str, widget: Gtk.Widget) -> Gtk.Box:
+    box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+    box.set_margin_bottom(8)
+    lbl = _lbl(label)
+    lbl.set_size_request(180, -1)
+    box.pack_start(lbl, False, False, 0)
+    box.pack_start(widget, False, False, 0)
+    return box
+
+def _field(label: str, widget: Gtk.Widget) -> Gtk.Box:
+    box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+    box.set_margin_bottom(8)
+    lbl = _lbl(label)
+    lbl.set_size_request(180, -1)
+    box.pack_start(lbl, False, False, 0)
+    box.pack_start(widget, True, True, 0)
+    return box
+
+def _switch_row(label: str, active: bool) -> tuple:
+    """Returns (row_widget, switch_widget)."""
+    box = Gtk.Box(spacing=12)
+    box.set_margin_bottom(8)
+    lbl = _lbl(label)
+    lbl.set_size_request(180, -1)
+    sw = Gtk.Switch()
+    sw.set_active(active)
+    sw.set_valign(Gtk.Align.CENTER)
+    box.pack_start(lbl, False, False, 0)
+    box.pack_start(sw, False, False, 0)
+    return box, sw
+
+def _cr_rounded_rect(cr, x, y, w, h, r):
+    cr.new_sub_path()
+    cr.arc(x + w - r, y + r,     r, -math.pi / 2, 0)
+    cr.arc(x + w - r, y + h - r, r, 0,             math.pi / 2)
+    cr.arc(x + r,     y + h - r, r, math.pi / 2,   math.pi)
+    cr.arc(x + r,     y + r,     r, math.pi,       3 * math.pi / 2)
+    cr.close_path()
+
+def _parse_arch_icon_sz(cfg: dict, fallback: int) -> int:
+    """Extract icon size from custom/arch format string, or return fallback."""
+    fmt = cfg.get("custom/arch", {}).get("format", "")
+    m = re.search(r"font='[^']*\s(\d+)'", fmt)
+    return int(m.group(1)) if m else fallback
+
+def _parse_arch_icon_color(cfg: dict) -> str | None:
+    """Extract explicit color from custom/arch format, or None (caller uses theme)."""
+    fmt = cfg.get("custom/arch", {}).get("format", "")
+    m = re.search(r"color='(#[0-9a-fA-F]{6})'", fmt, re.IGNORECASE)
+    return m.group(1) if m else None
+
+def _hex_to_rgb(hx: str) -> tuple:
+    hx = hx.lstrip("#")
+    return (int(hx[0:2], 16) / 255, int(hx[2:4], 16) / 255, int(hx[4:6], 16) / 255)
+
+def _hex_darker(hx: str, factor: float) -> str:
+    """Return a darker version of a hex color (factor 0=black, 1=same)."""
+    hx = hx.lstrip("#")
+    r = int(int(hx[0:2], 16) * factor)
+    g = int(int(hx[2:4], 16) * factor)
+    b = int(int(hx[4:6], 16) * factor)
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+def _hsv_to_hex(h: float, s: float, v: float) -> str:
+    r, g, b = colorsys.hsv_to_rgb(h % 1.0, max(0.0, min(1.0, s)), max(0.0, min(1.0, v)))
+    return "#{:02x}{:02x}{:02x}".format(int(r * 255), int(g * 255), int(b * 255))
+
+# ── main window ───────────────────────────────────────────────────────────────
+
+class VsWaybarSettings(Gtk.Window):
+
+    def __init__(self):
+        super().__init__(title="vsWaybar Studio")
+        self.set_default_size(960, 660)
+        self.set_position(Gtk.WindowPosition.CENTER)
+        self.connect("delete-event", self._on_close)
+        self.connect("key-press-event", self._on_key)
+
+        self._config_path     = CONFIG_PATH
+        self._css_path        = CSS_PATH
+        self._cfg:       dict = {}
+        self._css_colors:dict = {}
+        self._w:         dict = {}
+        self._dark            = False
+        self._theme           = THEME_LIGHT
+        self._css_provider    = Gtk.CssProvider()
+        self._path_lbl        = None
+        self._status_timer    = None
+        self._selected_module = None
+        self._notebook        = None
+        self._rnd_mode        = None
+        self._module_panel    = None
+        self._bar_preview_da  = None
+        self._ws_anim_t       = 0.0
+
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(),
+            self._css_provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+        )
+        self._apply_css()
+        self._load_config()
+        self._build_ui()
+        self.show_all()
+        GLib.timeout_add(50, self._ws_anim_tick)
+
+    # ── events ────────────────────────────────────────────────────────────────
+
+    def _on_close(self, *_):
+        Gtk.main_quit()
+        return False
+
+    def _on_key(self, _, event):
+        ctrl = event.state & Gdk.ModifierType.CONTROL_MASK
+        if ctrl:
+            if event.keyval == Gdk.KEY_s: self._on_preview(); return True
+            if event.keyval == Gdk.KEY_o: self._on_open(); return True
+        return False
+
+    # ── CSS ───────────────────────────────────────────────────────────────────
+
+    def _apply_css(self):
+        self._css_provider.load_from_data(_build_css(self._theme))
+
+    def _toggle_theme(self, *_):
+        self._dark  = not self._dark
+        self._theme = THEME_DARK if self._dark else THEME_LIGHT
+        self._apply_css()
+        self._rebuild_ui()
+
+    # ── config I/O ────────────────────────────────────────────────────────────
+
+    def _load_config(self):
+        self._cfg = copy.deepcopy(DEFAULTS)
+        try:
+            with open(self._config_path) as f:
+                user = json.load(f)
+            for k in ("layer", "output", "position", "height", "spacing",
+                      "margin-top", "margin-bottom", "margin-left", "margin-right"):
+                if k in user:
+                    self._cfg[k] = user[k]
+            for zone in ("modules-left", "modules-center", "modules-right"):
+                if zone in user:
+                    self._cfg[zone] = user[zone]
+            for mod in ALL_MODULES:
+                if mod in user and isinstance(user[mod], dict):
+                    # merge: start from defaults so virtual keys are preserved
+                    base = copy.deepcopy(DEFAULTS.get(mod, {}))
+                    base.update(user[mod])
+                    self._cfg[mod] = base
+            # strip deprecated/removed keys
+            self._cfg.get("clock", {}).pop("format-alt", None)
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            print(f"Warning: {e}")
+
+        self._css_colors = copy.deepcopy(CSS_COLOR_DEFAULTS)
+        try:
+            with open(self._css_path) as f:
+                css_text = f.read()
+            for m in re.finditer(r'@define-color\s+(\w+)\s+(#[0-9a-fA-F]{6})', css_text):
+                name, val = m.group(1), m.group(2)
+                if name in self._css_colors:
+                    self._css_colors[name] = val
+            # global font-size: * { font-size: Npx; }
+            mf = re.search(r'\*\s*\{[^}]*font-size:\s*(\d+)px', css_text, re.DOTALL)
+            if mf:
+                self._cfg["font-size"] = int(mf.group(1))
+            # opacity: read from rgba() in modules block
+            mo = re.search(r'rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*([\d.]+)\s*\)', css_text)
+            if mo:
+                self._cfg["opacity"] = int(float(mo.group(1)) * 100)
+
+            # separators: detect saved marker block
+            if '/* vswaybar:sep */' in css_text:
+                self._cfg["separators"] = True
+
+            # global font-family: * { font-family: "..."; } — extract first name only
+            mff = re.search(r'\*\s*\{[^}]*font-family:\s*([^;]+);', css_text, re.DOTALL)
+            if mff:
+                first = mff.group(1).split(",")[0].strip().strip('"').strip("'")
+                if first and first.lower() not in ("monospace", "sans-serif", "serif"):
+                    self._cfg["font-family"] = first
+            # module H-padding from zone container: .modules-* { padding: Vpx Hpx }
+            mp = re.search(
+                r'\.modules-left,\s*\n\.modules-center,\s*\n\.modules-right\s*\{[^}]*padding:\s*\d+px\s+(\d+)px',
+                css_text, re.DOTALL
+            )
+            if mp:
+                self._cfg["mod-padding"] = int(mp.group(1))
+
+            # arch icon padding from #custom-arch { padding: 0 Rpx 0 Lpx }
+            karch = re.search(
+                r'#custom-arch\s*\{[^}]*padding:\s*\d+px\s+(\d+)px\s+\d+px\s+(\d+)px',
+                css_text, re.DOTALL
+            )
+            arch_c = self._cfg.setdefault("custom/arch", {})
+            arch_c.setdefault("arch-pad-right", int(karch.group(1)) if karch else 8)
+            arch_c.setdefault("arch-pad-left",  int(karch.group(2)) if karch else 8)
+
+            # workspace animation colors from @keyframes ws-active
+            km = re.search(
+                r'@keyframes\s+ws-active\s*\{.*?0%[^{]*\{[^}]*background-color:\s*(#[0-9a-fA-F]{6})',
+                css_text, re.DOTALL | re.IGNORECASE
+            )
+            km2 = re.search(
+                r'@keyframes\s+ws-active\s*\{.*?50%[^{]*\{[^}]*background-color:\s*(#[0-9a-fA-F]{6})',
+                css_text, re.DOTALL | re.IGNORECASE
+            )
+            ws_c = self._cfg.setdefault("hyprland/workspaces", {})
+            ws_c.setdefault("anim-color-1", km.group(1)  if km  else "#2980b9")
+            ws_c.setdefault("anim-color-2", km2.group(1) if km2 else "#420ed2")
+            # animation duration
+            kd = re.search(
+                r'#workspaces\s+button\.active\s*\{[^}]*animation:\s*ws-active\s+([\d.]+)s',
+                css_text, re.DOTALL
+            )
+            ws_c.setdefault("anim-duration", float(kd.group(1)) if kd else 3.0)
+            # button border-radius
+            kr = re.search(
+                r'#workspaces\s+button\s*\{[^}]*border-radius:\s*(\d+)px',
+                css_text, re.DOTALL
+            )
+            ws_c.setdefault("button-radius", int(kr.group(1)) if kr else 8)
+            # button padding
+            kp = re.search(
+                r'#workspaces\s+button\s*\{[^}]*padding:\s*(\d+)px\s+(\d+)px',
+                css_text, re.DOTALL
+            )
+            ws_c.setdefault("button-pad-v", int(kp.group(1)) if kp else 4)
+            ws_c.setdefault("button-pad-h", int(kp.group(2)) if kp else 14)
+            # button min-width
+            kmw = re.search(
+                r'#workspaces\s+button\s*\{[^}]*min-width:\s*(\d+)px',
+                css_text, re.DOTALL
+            )
+            ws_c.setdefault("button-minw", int(kmw.group(1)) if kmw else 32)
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            print(f"Warning CSS: {e}")
+
+    def _collect(self):
+        w = self._w
+        for k in ("position", "bar-style"):
+            if k in w:
+                self._cfg[k] = w[k].get_active_text()
+        if "output" in w:
+            val = w["output"].get_active_text() or ""
+            if val == "All monitors":
+                self._cfg.pop("output", None)
+            else:
+                self._cfg["output"] = val.strip()
+        if "font-family" in w:
+            v = w["font-family"].get_font_name().strip()
+            if v:
+                # use Pango to extract family only (strips size, style, weight)
+                family = Pango.FontDescription.from_string(v).get_family()
+                if family:
+                    self._cfg["font-family"] = family
+        for k in ("height", "spacing", "margin-top", "margin-bottom", "margin-left", "margin-right", "zone-radius",
+                  "font-size", "mod-padding", "border-width", "opacity"):
+            if k in w:
+                self._cfg[k] = int(w[k].get_value())
+        if "separators" in w:
+            self._cfg["separators"] = w["separators"].get_active()
+        for zone in ("modules-left", "modules-center", "modules-right"):
+            store = w.get(f"zone_{zone}")
+            if store:
+                self._cfg[zone] = [row[0] for row in store]
+        for name, entry in w.get("css_hex_entries", {}).items():
+            val = entry.get_text().strip()
+            if re.match(r'^#[0-9a-fA-F]{6}$', val, re.IGNORECASE):
+                self._css_colors[name] = val.lower()
+        self._collect_module_fields()
+
+    def _collect_module_fields(self):
+        mod = self._selected_module
+        if not mod:
+            return
+        if mod not in self._cfg:
+            self._cfg[mod] = {}
+        fields = self._w.get("mod_fields", {})
+        for fkey, widget in fields.items():
+            if "." in fkey:
+                parent, child = fkey.split(".", 1)
+                if parent not in self._cfg[mod] or not isinstance(self._cfg[mod][parent], dict):
+                    self._cfg[mod][parent] = {}
+                if isinstance(widget, Gtk.SpinButton):   # SpinButton before Entry!
+                    self._cfg[mod][parent][child] = int(widget.get_value())
+                elif isinstance(widget, Gtk.Entry):
+                    self._cfg[mod][parent][child] = widget.get_text()
+                elif isinstance(widget, Gtk.Switch):
+                    self._cfg[mod][parent][child] = widget.get_active()
+            elif isinstance(widget, Gtk.SpinButton):     # SpinButton before Entry!
+                self._cfg[mod][fkey] = int(widget.get_value())
+            elif isinstance(widget, Gtk.Entry):
+                self._cfg[mod][fkey] = widget.get_text()
+            elif isinstance(widget, Gtk.Switch):
+                self._cfg[mod][fkey] = widget.get_active()
+            elif isinstance(widget, Gtk.ComboBoxText):
+                self._cfg[mod][fkey] = widget.get_active_text()
+
+        # strip keys that must never appear in saved JSON
+        if mod == "clock":
+            self._cfg[mod].pop("format-alt", None)
+
+        # rebuild custom/arch format from size + color + glyph controls
+        if mod == "custom/arch":
+            sz_w    = fields.get("arch-icon-size")
+            col_w   = fields.get("arch-icon-color")
+            glyph_w = fields.get("arch-icon-glyph")
+            if sz_w is not None:
+                sz     = int(sz_w.get_value()) if isinstance(sz_w, Gtk.SpinButton) else 20
+                col    = col_w.get_text().strip()   if isinstance(col_w,   Gtk.Entry) else ""
+                glyph  = glyph_w.get_text().strip() if isinstance(glyph_w, Gtk.Entry) else "󰣇"
+                if not glyph: glyph = "󰣇"
+                self._cfg[mod].pop("arch-icon-size",  None)
+                self._cfg[mod].pop("arch-icon-color",  None)
+                col_attr = f" color='{col}'" if re.match(r'^#[0-9a-fA-F]{6}$', col, re.IGNORECASE) else ""
+                self._cfg[mod]["format"]          = f"<span font='JetBrainsMono Nerd Font Mono {sz}'{col_attr}>{glyph}</span>"
+                self._cfg[mod]["arch-icon-glyph"] = glyph
+
+    def _build_save_config(self) -> dict:
+        out = {}
+        for k in ("position", "height", "spacing",
+                  "margin-top", "margin-bottom", "margin-left", "margin-right"):
+            out[k] = self._cfg.get(k, DEFAULTS.get(k))
+        if "output" in self._cfg:
+            out["output"] = self._cfg["output"]
+        out["modules-left"]   = self._cfg["modules-left"]
+        out["modules-center"] = self._cfg["modules-center"]
+        out["modules-right"]  = self._cfg["modules-right"]
+        for mod in ALL_MODULES:
+            if mod in self._cfg:
+                mod_cfg = dict(self._cfg[mod])
+                if mod == "clock":
+                    for _k in _CLOCK_OPTIONAL_KEYS:
+                        if _k in mod_cfg and str(mod_cfg[_k]).strip() == "":
+                            mod_cfg.pop(_k)
+                out[mod] = mod_cfg
+        return out
+
+    def _build_save_css(self) -> str:
+        try:
+            with open(self._css_path) as f:
+                css_text = f.read()
+        except FileNotFoundError:
+            css_text = ""
+
+        # ── @define-color replacements ────────────────────────────────────────
+        for name, val in self._css_colors.items():
+            pattern = rf'(@define-color\s+{re.escape(name)}\s+)(#[0-9a-fA-F]{{6}})'
+            css_text = re.sub(pattern, rf'\g<1>{val}', css_text)
+
+        # ── derived values ────────────────────────────────────────────────────
+        base_hex  = self._css_colors.get("base",     "#11140e").lstrip("#")
+        s0_color  = self._css_colors.get("surface0", "#1d211a")
+        br, bg, bb = (int(base_hex[i:i+2], 16) for i in (0, 2, 4))
+        rgb       = f"{br},{bg},{bb}"
+        zone_r    = self._cfg.get("zone-radius",   12)
+        bar_style = self._cfg.get("bar-style",    "islands")
+        opacity   = self._cfg.get("opacity",      95) / 100
+        font_sz   = self._cfg.get("font-size",    13)
+        mod_pad   = self._cfg.get("mod-padding",  8)
+        brd_w     = self._cfg.get("border-width", 1)
+
+        # ── global font-family + font-size ───────────────────────────────────
+        font_fam_raw = self._cfg.get("font-family", "Product Sans")
+        # wrap in quotes for CSS; keep monospace fallback
+        font_fam_css = f'"{font_fam_raw}", monospace'
+        css_text = re.sub(
+            r'(\*\s*\{[^}]*?font-family:\s*)[^;]+;',
+            rf'\g<1>{font_fam_css};',
+            css_text, flags=re.DOTALL
+        )
+        css_text = re.sub(
+            r'(\*\s*\{[^}]*?font-size:\s*)\d+px',
+            rf'\g<1>{font_sz}px',
+            css_text, flags=re.DOTALL
+        )
+
+        # ── window#waybar background + radius (barra = full pill) ───────────
+        win_bg = f"rgba({rgb},{opacity:.2f})" if bar_style == "bar" else "transparent"
+        win_r  = zone_r if bar_style == "bar" else 0
+        css_text = re.sub(
+            r'(window#waybar\s*\{[^}]*?background:\s*)[^;]+;',
+            rf'\g<1>{win_bg};',
+            css_text, flags=re.DOTALL
+        )
+        # Add/replace border-radius inside window#waybar block
+        if re.search(r'window#waybar\s*\{[^}]*?border-radius:', css_text, re.DOTALL):
+            css_text = re.sub(
+                r'(window#waybar\s*\{[^}]*?border-radius:\s*)[^;]+;',
+                rf'\g<1>{win_r}px;',
+                css_text, flags=re.DOTALL
+            )
+        else:
+            css_text = re.sub(
+                r'(window#waybar\s*\{[^}]*?)(color:\s*[^;]+;)',
+                rf'\g<1>\g<2>\n    border-radius: {win_r}px;',
+                css_text, flags=re.DOTALL
+            )
+
+        # ── window#waybar border (barra style only) ──────────────────────────
+        win_brd = f"{brd_w}px solid {s0_color}" if bar_style == "bar" and brd_w > 0 else "none"
+        if re.search(r'window#waybar\s*\{[^}]*?border:', css_text, re.DOTALL):
+            css_text = re.sub(
+                r'(window#waybar\s*\{[^}]*?border:\s*)[^;]+;',
+                rf'\g<1>{win_brd};',
+                css_text, flags=re.DOTALL
+            )
+        else:
+            css_text = re.sub(
+                r'(window#waybar\s*\{[^}]*?border-radius:\s*[^;]+;)',
+                rf'\g<1>\n    border: {win_brd};',
+                css_text, flags=re.DOTALL
+            )
+
+        # ── .modules-left/center/right block ─────────────────────────────────
+        brd = f"{brd_w}px solid {s0_color}" if brd_w > 0 else "none"
+        if bar_style == "bar":
+            modules_block = (
+                ".modules-left,\n.modules-center,\n.modules-right {\n"
+                "    background: transparent;\n"
+                "    border-radius: 0;\n"
+                f"    padding: 2px {mod_pad}px;\n"
+                "    border: none;\n"
+                "    min-height: 0;\n"
+                "}"
+            )
+        elif bar_style == "modules":
+            modules_block = (
+                ".modules-left,\n.modules-center,\n.modules-right {\n"
+                "    background: transparent;\n"
+                "    border: none;\n"
+                f"    padding: 2px {max(2, mod_pad // 2)}px;\n"
+                "    min-height: 0;\n"
+                "}\n\n"
+                ".modules-left > *,\n.modules-center > *,\n.modules-right > * {\n"
+                f"    background: rgba({rgb},{opacity:.2f});\n"
+                f"    border-radius: {zone_r}px;\n"
+                f"    border: {brd};\n"
+                f"    padding: 0 {mod_pad}px;\n"
+                "    margin: 0 2px;\n"
+                "}"
+            )
+        else:  # islands
+            modules_block = (
+                ".modules-left,\n.modules-center,\n.modules-right {\n"
+                f"    background: rgba({rgb},{opacity:.2f});\n"
+                f"    border-radius: {zone_r}px;\n"
+                f"    padding: 2px {mod_pad}px;\n"
+                f"    border: {brd};\n"
+                "    min-height: 0;\n"
+                "}"
+            )
+
+        css_text = re.sub(
+            r'\.modules-left,\s*\n\.modules-center,\s*\n\.modules-right\s*\{[^}]+\}'
+            r'(?:\s*\n\n\.modules-left\s*>\s*\*,[\s\S]*?\})?',
+            modules_block,
+            css_text
+        )
+
+        # ── per-module padding override ───────────────────────────────────────
+        css_text = re.sub(r'\n*/\* vswaybar:modpad \*/.*$', '', css_text, flags=re.DOTALL)
+        arch_c  = self._cfg.get("custom/arch", {})
+        arch_pl = arch_c.get("arch-pad-left",  8)
+        arch_pr = arch_c.get("arch-pad-right", 8)
+        css_text += (
+            f"\n/* vswaybar:modpad */\n"
+            f"#clock, #cpu, #memory, #network, #pulseaudio, #battery, #tray,\n"
+            f"#custom-updates, #custom-weather, #custom-swaync, #custom-power {{\n"
+            f"    padding: 0 {mod_pad}px;\n"
+            f"}}\n"
+            f"#custom-arch {{\n"
+            f"    padding: 0 {arch_pr}px 0 {arch_pl}px;\n"
+            f"}}\n"
+        )
+
+        # ── separators (islas / barra only) ──────────────────────────────────
+        separators = self._cfg.get("separators", False)
+        css_text = re.sub(r'\n*/\* vswaybar:sep \*/.*$', '', css_text, flags=re.DOTALL)
+        if separators and bar_style in ("islands", "bar"):
+            sep_color = s0_color
+            css_text += (
+                f"\n/* vswaybar:sep */\n"
+                f".modules-left > *, .modules-center > *, .modules-right > * {{\n"
+                f"    border-right: {brd_w}px solid {sep_color};\n"
+                f"}}\n"
+                f".modules-left > *:last-child,\n"
+                f".modules-center > *:last-child,\n"
+                f".modules-right > *:last-child {{\n"
+                f"    border-right: none;\n"
+                f"}}\n"
+            )
+
+        # ── workspace animation colors ───────────────────────────────────────
+        ws_c = self._cfg.get("hyprland/workspaces", {})
+        ac1  = ws_c.get("anim-color-1",  "#2980b9")
+        ac2  = ws_c.get("anim-color-2",  "#420ed2")
+        dur  = ws_c.get("anim-duration", 3.0)
+        wsr  = ws_c.get("button-radius", 8)
+        css_text = re.sub(
+            r'(@keyframes\s+ws-active\s*\{[^}]*0%\s*\{[^}]*background-color:\s*)(#[0-9a-fA-F]{6})',
+            rf'\g<1>{ac1}',
+            css_text, flags=re.DOTALL | re.IGNORECASE
+        )
+        css_text = re.sub(
+            r'(@keyframes\s+ws-active\s*\{.*?50%\s*\{[^}]*background-color:\s*)(#[0-9a-fA-F]{6})',
+            rf'\g<1>{ac2}',
+            css_text, flags=re.DOTALL | re.IGNORECASE
+        )
+        css_text = re.sub(
+            r'(#workspaces\s+button\.active\s*\{[^}]*animation:\s*ws-active\s+)([\d.]+)s',
+            rf'\g<1>{dur}s',
+            css_text, flags=re.DOTALL
+        )
+        css_text = re.sub(
+            r'(#workspaces\s+button\s*\{[^}]*border-radius:\s*)\d+px',
+            rf'\g<1>{wsr}px',
+            css_text, flags=re.DOTALL
+        )
+        wpv = ws_c.get("button-pad-v", 4)
+        wph = ws_c.get("button-pad-h", 14)
+        css_text = re.sub(
+            r'(#workspaces\s+button\s*\{[^}]*padding:\s*)\d+px\s+\d+px',
+            rf'\g<1>{wpv}px {wph}px',
+            css_text, flags=re.DOTALL
+        )
+        wmw = ws_c.get("button-minw", 32)
+        css_text = re.sub(
+            r'(#workspaces\s+button\s*\{[^}]*min-width:\s*)\d+px',
+            rf'\g<1>{wmw}px',
+            css_text, flags=re.DOTALL
+        )
+
+        return css_text
+
+    def _on_save_as(self, *_):
+        dlg = Gtk.FileChooserDialog(
+            title="Save config as…", parent=self,
+            action=Gtk.FileChooserAction.SAVE,
+            buttons=("Cancel", Gtk.ResponseType.CANCEL, "Save", Gtk.ResponseType.OK),
+        )
+        dlg.set_current_name(os.path.basename(self._config_path))
+        dlg.set_do_overwrite_confirmation(True)
+        if dlg.run() == Gtk.ResponseType.OK:
+            dest = dlg.get_filename()
+            dlg.destroy()
+            self._collect()
+            try:
+                cfg_out = self._build_save_config()
+                css_out = self._build_save_css()
+                with open(dest, "w") as f:
+                    json.dump(cfg_out, f, indent=4, ensure_ascii=False)
+                css_dest = os.path.splitext(dest)[0] + ".css"
+                with open(css_dest, "w") as f:
+                    f.write(css_out)
+                self._status(f"✓  Saved to {os.path.basename(dest)}")
+            except Exception as e:
+                self._err(f"Could not save:\n{e}")
+        else:
+            dlg.destroy()
+
+    def _on_open(self, *_):
+        dlg = Gtk.FileChooserDialog(
+            title="Open Waybar config", parent=self,
+            action=Gtk.FileChooserAction.OPEN,
+            buttons=("Cancel", Gtk.ResponseType.CANCEL, "Open", Gtk.ResponseType.OK),
+        )
+        ff = Gtk.FileFilter()
+        ff.set_name("JSON configs")
+        ff.add_pattern("*.json")
+        dlg.add_filter(ff)
+        if dlg.run() == Gtk.ResponseType.OK:
+            self._config_path = dlg.get_filename()
+            dlg.destroy()
+            self._load_config()
+            self._rebuild_ui()
+            self._status("✓  Loaded")
+        else:
+            dlg.destroy()
+
+
+    def _on_preview(self, *_):
+        """Write config + CSS to disk, then restart waybar."""
+        self._collect()
+        try:
+            cfg_out = self._build_save_config()
+            css_out = self._build_save_css()   # read CSS BEFORE opening for write
+            with open(self._config_path, "w") as f:
+                json.dump(cfg_out, f, indent=4, ensure_ascii=False)
+            with open(self._css_path, "w") as f:
+                f.write(css_out)
+        except Exception as e:
+            self._err(f"No se pudo escribir config:\n{e}")
+            return
+
+        # Full restart — more reliable than SIGUSR2 for CSS changes
+        subprocess.Popen(["pkill", "-x", "waybar"])
+        GLib.timeout_add(600, self._relaunch_waybar)
+        self._status("↺  Reiniciando waybar…")
+
+    def _relaunch_waybar(self):
+        try:
+            subprocess.Popen(
+                ["waybar", "-c", self._config_path, "-s", self._css_path],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            self._status("✓  Waybar reiniciado")
+        except Exception as e:
+            self._err(f"Error al lanzar waybar:\n{e}")
+        return False  # one-shot timer
+
+    # ── UI skeleton ───────────────────────────────────────────────────────────
+
+    def _rebuild_ui(self):
+        page = self._notebook.get_current_page() if self._notebook else 0
+        for child in self.get_children():
+            self.remove(child)
+        self._build_ui()
+        self._notebook.set_current_page(page)
+        self.show_all()
+
+    def _build_ui(self):
+        self._w = {"css_colors": {}, "css_hex_entries": {}, "mod_fields": {}}
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.add(root)
+        root.pack_start(self._make_header(),      False, False, 0)
+        root.pack_start(self._make_bar_preview(), False, False, 0)
+        root.pack_start(self._make_notebook(),    True,  True,  0)
+        root.pack_start(self._make_statusbar(),   False, False, 0)
+        self._connect_preview_signals()
+
+    def _make_statusbar(self) -> Gtk.Widget:
+        bar = Gtk.Box(spacing=10)
+        bar.get_style_context().add_class("status-bar")
+        self._status_lbl = Gtk.Label(label="")
+        self._status_lbl.set_xalign(0)
+        self._status_lbl.get_style_context().add_class("status-ok")
+        self._status_hint = Gtk.Label(label="")
+        self._status_hint.set_xalign(0)
+        self._status_hint.get_style_context().add_class("status-hint")
+        bar.pack_start(self._status_lbl,  False, False, 0)
+        bar.pack_start(self._status_hint, False, False, 0)
+        return bar
+
+    def _make_bar_preview(self) -> Gtk.Widget:
+        wrap = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        wrap.get_style_context().add_class("preview-strip")
+        da = Gtk.DrawingArea()
+        da.set_size_request(-1, 120)
+        da.connect("draw", self._draw_bar_preview)
+        self._bar_preview_da = da
+        wrap.pack_start(da, True, True, 0)
+        return wrap
+
+    def _make_header(self) -> Gtk.Widget:
+        hdr = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        hdr.get_style_context().add_class("app-header")
+
+        left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+        left.set_valign(Gtk.Align.CENTER)
+        left.pack_start(_lbl("󰒓  vsWaybar Studio", "app-title"), False, False, 0)
+        self._path_lbl = _lbl(self._config_path, "app-path")
+        left.pack_start(self._path_lbl, False, False, 0)
+        hdr.pack_start(left, True, True, 0)
+
+        btn_box = Gtk.Box(spacing=8)
+        btn_box.set_valign(Gtk.Align.CENTER)
+
+        theme_btn = Gtk.Button(label="☾" if self._dark else "☀")
+        theme_btn.get_style_context().add_class("theme-btn")
+        theme_btn.connect("clicked", self._toggle_theme)
+
+        open_btn = Gtk.Button(label="Open…")
+        open_btn.get_style_context().add_class("open-btn")
+        open_btn.connect("clicked", self._on_open)
+
+        apply_btn = Gtk.Button(label="Apply")
+        apply_btn.get_style_context().add_class("save-btn")
+        apply_btn.connect("clicked", self._on_preview)
+
+        saveas_btn = Gtk.Button(label="Save as…")
+        saveas_btn.get_style_context().add_class("open-btn")
+        saveas_btn.connect("clicked", self._on_save_as)
+
+        for b in (theme_btn, open_btn, saveas_btn, apply_btn):
+            btn_box.pack_start(b, False, False, 0)
+        hdr.pack_start(btn_box, False, False, 0)
+        return hdr
+
+    def _make_notebook(self) -> Gtk.Widget:
+        nb = Gtk.Notebook()
+        nb.set_tab_pos(Gtk.PositionType.LEFT)
+        nb.set_show_border(False)
+        self._notebook = nb
+        pages = [
+            ("  Bar",        self._page_bar()),
+            ("  Layout",     self._page_layout()),
+            ("  Modules",    self._page_modules()),
+            ("  Styling",    self._page_styling()),
+            ("  Scripts",    self._page_scripts()),
+            ("  Templates",  self._page_templates()),
+            ("  About",      self._page_about()),
+        ]
+        for label, page in pages:
+            lbl = Gtk.Label(label=label)
+            lbl.set_xalign(0)
+            nb.append_page(page, lbl)
+        return nb
+
+    # ── page: Bar ─────────────────────────────────────────────────────────────
+
+    def _page_bar(self) -> Gtk.Widget:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        box.set_margin_start(28)
+        box.set_margin_end(28)
+        box.set_margin_top(8)
+        box.set_margin_bottom(20)
+
+        box.pack_start(_section("Position"), False, False, 0)
+
+        pos = _combo(["top", "bottom"], self._cfg["position"])
+        self._w["position"] = pos
+        pos.connect("changed", self._refresh_preview)
+        box.pack_start(_row("Position", pos), False, False, 0)
+
+        out_combo = Gtk.ComboBoxText()
+        self._w["output"] = out_combo
+
+        def _fill_monitors(combo):
+            current = combo.get_active_text() or self._cfg.get("output", "")
+            combo.remove_all()
+            combo.append_text("All monitors")
+            try:
+                r = subprocess.run(["hyprctl", "monitors", "-j"],
+                                   capture_output=True, text=True, timeout=3)
+                names = [m["name"] for m in json.loads(r.stdout)]
+            except Exception:
+                names = []
+            for n in names:
+                combo.append_text(n)
+            # restore selection
+            matched = False
+            for i, n in enumerate(["All monitors"] + names):
+                if n == current or (not current and n == "All monitors"):
+                    combo.set_active(i)
+                    matched = True
+                    break
+            if not matched:
+                combo.prepend_text(current)
+                combo.set_active(0)
+
+        _fill_monitors(out_combo)
+        out_combo.connect("changed", self._refresh_preview)
+
+        refresh_btn = Gtk.Button(label="⟳")
+        refresh_btn.get_style_context().add_class("open-btn")
+        refresh_btn.set_tooltip_text("Re-detect monitors")
+        refresh_btn.connect("clicked", lambda *_: _fill_monitors(out_combo))
+
+        out_row = Gtk.Box(spacing=6)
+        out_row.pack_start(out_combo,    False, False, 0)
+        out_row.pack_start(refresh_btn,  False, False, 0)
+        box.pack_start(_row("Output (monitor)", out_row), False, False, 0)
+
+        box.pack_start(_section("Dimensions"), False, False, 0)
+
+        height = _spin(self._cfg["height"], 20, 80)
+        self._w["height"] = height
+        height.connect("value-changed", self._refresh_preview)
+        box.pack_start(_row("Altura (px)", height), False, False, 0)
+
+        spacing = _spin(self._cfg["spacing"], 0, 20)
+        self._w["spacing"] = spacing
+        spacing.connect("value-changed", self._refresh_preview)
+        box.pack_start(_row("Module spacing", spacing), False, False, 0)
+
+        box.pack_start(_section("Appearance"), False, False, 0)
+
+        style_combo = _combo(["islands", "bar", "modules"],
+                             self._cfg.get("bar-style", "islands"))
+        self._w["bar-style"] = style_combo
+        style_combo.connect("changed", self._refresh_preview)
+        box.pack_start(_row("Visual style", style_combo), False, False, 0)
+
+        opacity = _spin(self._cfg.get("opacity", 95), 10, 100)
+        self._w["opacity"] = opacity
+        opacity.connect("value-changed", self._refresh_preview)
+        box.pack_start(_row("Opacity (%)", opacity), False, False, 0)
+
+        radius = _spin(self._cfg.get("zone-radius", 12), 0, 30)
+        self._w["zone-radius"] = radius
+        radius.connect("value-changed", self._refresh_preview)
+        box.pack_start(_row("Zone radius (px)", radius), False, False, 0)
+
+        border_w = _spin(self._cfg.get("border-width", 1), 0, 6)
+        self._w["border-width"] = border_w
+        border_w.connect("value-changed", self._refresh_preview)
+        box.pack_start(_row("Border (px)", border_w), False, False, 0)
+
+        sep_sw = Gtk.Switch()
+        sep_sw.set_active(self._cfg.get("separators", False))
+        sep_sw.set_halign(Gtk.Align.START)
+        self._w["separators"] = sep_sw
+        sep_sw.connect("notify::active", self._refresh_preview)
+        box.pack_start(_row("Module separators", sep_sw), False, False, 0)
+
+        current_ff  = self._cfg.get("font-family", "Product Sans")
+        current_fsz = self._cfg.get("font-size", 13)
+        fb = Gtk.FontButton()
+        # include size so dialog opens with current value pre-selected
+        fb.set_font(f"{current_ff} {current_fsz}")
+        fb.set_use_size(True)
+        fb.set_show_size(True)
+        fb.set_halign(Gtk.Align.START)
+        self._w["font-family"] = fb
+
+        font_sz = _spin(current_fsz, 8, 48)
+        self._w["font-size"] = font_sz
+        font_sz.connect("value-changed", self._refresh_preview)
+
+        def _on_font_set(btn):
+            desc   = Pango.FontDescription.from_string(btn.get_font_name())
+            family = desc.get_family()
+            if family:
+                self._cfg["font-family"] = family
+            sz = desc.get_size()
+            if sz > 0:
+                px = max(8, min(48, sz // Pango.SCALE))
+                font_sz.set_value(px)
+            self._refresh_preview()
+
+        fb.connect("font-set", _on_font_set)
+        box.pack_start(_row("Font family", fb), False, False, 0)
+        box.pack_start(_row("Font size (px)", font_sz), False, False, 0)
+
+        mod_pad = _spin(self._cfg.get("mod-padding", 8), 0, 30)
+        self._w["mod-padding"] = mod_pad
+        mod_pad.connect("value-changed", self._refresh_preview)
+        box.pack_start(_row("Module padding (px)", mod_pad), False, False, 0)
+
+        box.pack_start(_section("Margins"), False, False, 0)
+
+        mt = _spin(self._cfg["margin-top"], 0, 60)
+        self._w["margin-top"] = mt
+        mt.connect("value-changed", self._refresh_preview)
+        box.pack_start(_row("Margin top (px)", mt), False, False, 0)
+
+        mb = _spin(self._cfg.get("margin-bottom", 0), 0, 60)
+        self._w["margin-bottom"] = mb
+        mb.connect("value-changed", self._refresh_preview)
+        box.pack_start(_row("Margin bottom (px)", mb), False, False, 0)
+
+        ml = _spin(self._cfg.get("margin-left", 10), 0, 100)
+        self._w["margin-left"] = ml
+        ml.connect("value-changed", self._refresh_preview)
+        box.pack_start(_row("Margin left (px)", ml), False, False, 0)
+
+        mr = _spin(self._cfg.get("margin-right", 10), 0, 100)
+        self._w["margin-right"] = mr
+        mr.connect("value-changed", self._refresh_preview)
+        box.pack_start(_row("Margin right (px)", mr), False, False, 0)
+
+        box.pack_start(
+            _hint("Margins set the space between the bar and the screen edge.\nLeft and right are not shown in the preview — apply to see them on the system."),
+            False, False, 0
+        )
+
+        sep = Gtk.Separator()
+        sep.set_margin_top(16)
+        sep.set_margin_bottom(8)
+        box.pack_start(sep, False, False, 0)
+
+        def_btn = Gtk.Button(label="↺  Load defaults")
+        def_btn.get_style_context().add_class("open-btn")
+        def_btn.set_tooltip_text("Restore default bar settings")
+        def_btn.connect("clicked", self._load_default_bar)
+        box.pack_start(def_btn, False, False, 0)
+
+        return _scrolled(box)
+
+    # ── page: Layout ──────────────────────────────────────────────────────────
+
+    def _page_layout(self) -> Gtk.Widget:
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+
+        # Zone editors
+        zones_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        zones_box.set_homogeneous(True)
+        for zone_key, zone_label in (
+            ("modules-left",   "Left"),
+            ("modules-center", "Center"),
+            ("modules-right",  "Right"),
+        ):
+            col = self._make_zone_editor(zone_key, zone_label)
+            zones_box.pack_start(col, True, True, 0)
+
+        outer.pack_start(zones_box, True, True, 0)
+
+        foot = Gtk.Box(spacing=0)
+        foot.set_margin_start(14)
+        foot.set_margin_end(14)
+        foot.set_margin_top(6)
+        foot.set_margin_bottom(10)
+        def_btn = Gtk.Button(label="↺  Load defaults")
+        def_btn.get_style_context().add_class("open-btn")
+        def_btn.set_tooltip_text("Restore the original left / center / right layout")
+        def_btn.connect("clicked", self._load_default_layout)
+        foot.pack_start(def_btn, False, False, 0)
+        outer.pack_start(foot, False, False, 0)
+
+        return outer
+
+    def _draw_zone_preview(self, widget, cr, side):
+        """Render a single zone (left or right) at natural scale for detail view."""
+        AW = widget.get_allocated_width()
+        AH = widget.get_allocated_height()
+        c  = self._css_colors
+
+        def _col(name, fb): return _hex_to_rgb(c.get(name, fb))
+        base     = _col("base",     "#11140e")
+        surface0 = _col("surface0", "#1d211a")
+        overlay0 = _col("overlay0", "#33362f")
+        sub0     = _col("subtext0", "#c4c8bb")
+        blue     = _col("blue",     "#abd290")
+        mauve    = _col("mauve",    "#abd290")
+        green    = _col("green",    "#a0cfcf")
+        peach    = _col("peach",    "#1e4e4e")
+        red_c    = _col("red",      "#ffb4ab")
+        text_c   = _col("text",     "#e1e4d9")
+        MOD_COLOR = {
+            "custom/arch": blue, "hyprland/workspaces": sub0,
+            "hyprland/window": sub0, "custom/weather": text_c,
+            "clock": blue, "tray": sub0,
+            "custom/updates": green, "pulseaudio": blue,
+            "network": green, "memory": mauve,
+            "cpu": peach, "battery": green,
+            "custom/swaync": text_c, "custom/power": red_c,
+        }
+
+        bar_style = self._cfg.get("bar-style",   "islands")
+        zone_r    = self._cfg.get("zone-radius",  12)
+        font_sz   = self._cfg.get("font-size",    13)
+        _arch_icon_sz = _parse_arch_icon_sz(self._cfg, font_sz)
+        mod_pad   = self._cfg.get("mod-padding",  8)
+        spacing   = self._cfg.get("spacing",       4)
+        opacity   = self._cfg.get("opacity",       95) / 100
+        separators= self._cfg.get("separators",   False)
+        brd_w     = self._cfg.get("border-width",  1)
+        ff        = self._cfg.get("font-family",  "JetBrainsMono Nerd Font Mono")
+
+        zone_key  = f"modules-{side}"
+        mods      = self._cfg.get(zone_key, [])
+
+        # bg
+        cr.set_source_rgb(*_hex_to_rgb(self._theme["bg"]))
+        cr.paint()
+
+        if not mods:
+            return
+
+        # measure content width at natural scale (sx=1)
+        def _mod_w(mod):
+            lo = PangoCairo.create_layout(cr)
+            fd = Pango.FontDescription.from_string(ff)
+            fd.set_absolute_size(max(6, font_sz) * Pango.SCALE)
+            lo.set_font_description(fd)
+            s = (self._cfg.get("custom/arch", {}).get("arch-icon-glyph", "󰣇") if mod == "custom/arch" else MOD_SAMPLE.get(mod))
+            if s is None:
+                icon, name = MODULE_LABELS.get(mod, ("", mod.split("/")[-1]))
+                s = f"{icon} {name}" if icon else name
+            lo.set_text(s, -1)
+            tw, _ = lo.get_pixel_size()
+            if mod == "custom/arch":
+                _pl = self._cfg.get("custom/arch", {}).get("arch-pad-left",  8)
+                _pr = self._cfg.get("custom/arch", {}).get("arch-pad-right", 8)
+                return tw + _pl + _pr
+            return tw + mod_pad * 2
+
+        _arch_col_hex_z = _parse_arch_icon_color(self._cfg)
+        _arch_col_rgb_z = _hex_to_rgb(_arch_col_hex_z) if _arch_col_hex_z else None
+
+        sp     = spacing
+        zone_w = mod_pad * 2 + sum(_mod_w(m) for m in mods) + max(0, len(mods)-1) * sp
+
+        # position: left zone → left-aligned, right zone → right-aligned
+        if side == "left":
+            zx = 12
+        else:
+            zx = max(12, AW - zone_w - 12)
+
+        bar_h = self._cfg.get("height", 36)
+        zy    = (AH - bar_h) // 2
+
+        # zone pill
+        if bar_style in ("islands", "modules"):
+            cr.set_source_rgba(*base, opacity)
+            _cr_rounded_rect(cr, zx, zy, zone_w, bar_h, zone_r)
+            cr.fill()
+            if brd_w > 0:
+                cr.set_source_rgb(*surface0)
+                cr.set_line_width(brd_w)
+                _cr_rounded_rect(cr, zx+.5, zy+.5, zone_w-1, bar_h-1, zone_r)
+                cr.stroke()
+        else:  # bar
+            cr.set_source_rgba(*base, opacity)
+            cr.rectangle(0, zy, AW, bar_h)
+            cr.fill()
+
+        # modules content
+        mx = zx + mod_pad
+        for mod in mods:
+            mw  = _mod_w(mod)
+            col = MOD_COLOR.get(mod, sub0) if mod != self._selected_module else blue
+            lo  = PangoCairo.create_layout(cr)
+            fd  = Pango.FontDescription.from_string(
+                      ff + (" Bold" if mod == "clock" else
+                            " Italic" if mod == "hyprland/window" else ""))
+            fd.set_absolute_size((_arch_icon_sz if mod == "custom/arch" else font_sz) * Pango.SCALE)
+            lo.set_font_description(fd)
+            s = (self._cfg.get("custom/arch", {}).get("arch-icon-glyph", "󰣇") if mod == "custom/arch" else MOD_SAMPLE.get(mod))
+            if s is None:
+                icon, name = MODULE_LABELS.get(mod, ("", mod.split("/")[-1]))
+                s = f"{icon} {name}" if icon else name
+            lo.set_text(s, -1)
+            tw, th = lo.get_pixel_size()
+            if mod == "custom/arch":
+                draw_col_z = _arch_col_rgb_z if _arch_col_rgb_z else col
+                _pl = self._cfg.get("custom/arch", {}).get("arch-pad-left", 8)
+                tx_z = mx + _pl
+            else:
+                draw_col_z = col
+                tx_z = mx + (mw - tw) / 2
+            cr.set_source_rgb(*draw_col_z)
+            cr.move_to(tx_z, zy + (bar_h - th) / 2)
+            PangoCairo.show_layout(cr, lo)
+            mx += mw + sp
+
+        # separators
+        if separators and bar_style in ("islands", "bar") and len(mods) > 1:
+            sep_inset = int(bar_h * 0.2)
+            cr.set_source_rgb(*overlay0)
+            cr.set_line_width(1.0)
+            mx = zx + mod_pad
+            for mod in mods[:-1]:
+                mx += _mod_w(mod)
+                sep_x = mx + max(sp, 2) / 2
+                cr.move_to(sep_x, zy + sep_inset)
+                cr.line_to(sep_x, zy + bar_h - sep_inset)
+                cr.stroke()
+                mx += sp
+
+    def _draw_bar_preview(self, widget, cr):
+        AW = widget.get_allocated_width()
+        AH = widget.get_allocated_height()
+        c  = self._css_colors
+
+        # ── colors ────────────────────────────────────────────────────────────
+        def _col(name, fb): return _hex_to_rgb(c.get(name, fb))
+        base     = _col("base",     "#11140e")
+        surface0 = _col("surface0", "#1d211a")
+        surface1 = _col("surface1", "#282b24")
+        overlay0 = _col("overlay0", "#33362f")
+        sub0     = _col("subtext0", "#c4c8bb")
+        blue     = _col("blue",     "#abd290")
+        mauve    = _col("mauve",    "#abd290")
+        green    = _col("green",    "#a0cfcf")
+        peach    = _col("peach",    "#1e4e4e")
+        red_c    = _col("red",      "#ffb4ab")
+        text_c   = _col("text",     "#e1e4d9")
+
+        MOD_COLOR = {
+            "custom/arch":         blue,   "hyprland/workspaces": sub0,
+            "hyprland/window":     sub0,   "custom/weather":      text_c,
+            "clock":               blue,   "tray":                sub0,
+            "custom/updates":      green,  "pulseaudio":          blue,
+            "network":             green,  "memory":              mauve,
+            "cpu":                 peach,  "battery":             green,
+            "custom/swaync":       text_c, "custom/power":        red_c,
+        }
+
+        # ── CSS natural dimensions (px, not pt) ───────────────────────────────
+        ZONE_PV  = 2
+        _ws_c    = self._cfg.get("hyprland/workspaces", {})
+        WS_PH    = int(_ws_c.get("button-pad-h",  14))
+        WS_PV    = int(_ws_c.get("button-pad-v",   4))
+        WS_MINW  = int(_ws_c.get("button-minw",   32))
+        WS_R     = int(_ws_c.get("button-radius",   8))
+
+        bar_h_nat  = self._cfg.get("height",      36)
+        zone_r_nat = self._cfg.get("zone-radius", 12)
+        spacing    = self._cfg.get("spacing",      4)
+        ml_nat     = self._cfg.get("margin-left",  10)
+        mr_nat     = self._cfg.get("margin-right", 10)
+        position   = self._cfg.get("position",    "top")
+        mt_nat     = self._cfg.get("margin-top",    6)
+        mb_nat     = self._cfg.get("margin-bottom", 0)
+        bar_style  = self._cfg.get("bar-style",   "islands")
+        separators = self._cfg.get("separators",  False)
+        brd_w_nat  = self._cfg.get("border-width", 1)
+        font_sz    = self._cfg.get("font-size",    13)
+        _arch_icon_sz = _parse_arch_icon_sz(self._cfg, font_sz)
+        MOD_PH     = self._cfg.get("mod-padding",  8)
+        ZONE_PH    = MOD_PH
+        # extract first font name from CSS font-family string for Pango
+        _raw_ff    = self._cfg.get("font-family", "Product Sans")
+        _first_ff  = _raw_ff.split(",")[0].strip().strip('"').strip("'")
+
+        # ── scale: fit bar on a 1920px virtual canvas, never enlarge ──────────
+        VW = 1920.0
+        sx = min(AW / VW, 1.0)   # only scale down, never up
+
+        bar_h  = bar_h_nat * sx
+        mt     = mt_nat * sx
+        mb     = mb_nat * sx
+        bar_y  = mt if position != "bottom" else (AH - mb - bar_h)
+
+        # ── background: editor theme ──────────────────────────────────────────
+        cr.set_source_rgb(*_hex_to_rgb(self._theme["bg"]))
+        cr.paint()
+
+        # ── Pango helpers — font sizes in CSS px, scaled by sx ────────────────
+        def _lo(text, css_px=None, bold=False, italic=False):
+            if css_px is None: css_px = font_sz
+            lo = PangoCairo.create_layout(cr)
+            style = ("Bold " if bold else "") + ("Italic" if italic else "")
+            fd = Pango.FontDescription.from_string(
+                f"{_first_ff} {style.strip()}"
+            )
+            fd.set_absolute_size(max(6, int(css_px * sx)) * Pango.SCALE)
+            lo.set_font_description(fd)
+            lo.set_text(text, -1)
+            return lo
+
+        # get_pixel_size() → screen pixels (device units)
+        def _sz(lo): return lo.get_pixel_size()
+
+        # Draw text centered at a natural-coordinate center point
+        def _txt(cx_nat, cy_nat, lo, rgb):
+            tw, th = _sz(lo)
+            cr.set_source_rgb(*rgb)
+            cr.move_to(cx_nat * sx - tw / 2, cy_nat * sx + bar_y - th / 2)
+            PangoCairo.show_layout(cr, lo)
+
+        # Filled rounded rect (natural coords)
+        def _fill(x, y, w, h, r, rgba):
+            cr.set_source_rgba(*rgba)
+            _cr_rounded_rect(cr, x * sx, y * sx + bar_y, w * sx, h * sx, r * sx)
+            cr.fill()
+
+        # Stroked rounded rect (natural coords, 1 device px border)
+        def _stroke(x, y, w, h, r, rgb):
+            cr.set_source_rgb(*rgb)
+            cr.set_line_width(1)
+            o = 0.5
+            _cr_rounded_rect(cr, x*sx + o, y*sx + bar_y + o, w*sx - 1, h*sx - 1, r*sx)
+            cr.stroke()
+
+        # ── workspaces ────────────────────────────────────────────────────────
+        ws_cfg     = self._cfg.get("hyprland/workspaces", {})
+        persistent = ws_cfg.get("persistent-workspaces", {}).get("*", [1, 2, 3, 4, 5])
+        if not isinstance(persistent, list) or not persistent:
+            persistent = [1, 2, 3, 4, 5]
+        ws_active = persistent[len(persistent) // 2]  # middle = active
+
+        # animated active-workspace color (mirrors @keyframes ws-active)
+        _ac1 = _hex_to_rgb(ws_cfg.get("anim-color-1", "#2980b9"))
+        _ac2 = _hex_to_rgb(ws_cfg.get("anim-color-2", "#420ed2"))
+        _pulse = abs(math.sin(self._ws_anim_t * math.pi))
+        ws_act_col = tuple(_ac1[i] * (1 - _pulse) + _ac2[i] * _pulse for i in range(3))
+
+        def _ws_w(n):
+            tw, _ = _sz(_lo(str(n), 14, bold=True))
+            return max(int(WS_MINW * sx), tw + int(WS_PH * 2 * sx))
+
+        ws_widths = [_ws_w(n) for n in persistent]
+        ws_total_px = sum(ws_widths) + int(spacing * sx) * max(0, len(persistent) - 1)
+
+        def _draw_ws(x0_nat):
+            ws_h_px = int((bar_h_nat - WS_PV * 2) * sx)
+            ws_y_px = int(WS_PV * sx) + bar_y
+            wx_px   = x0_nat * sx
+            sp_px   = int(spacing * sx)
+            for i, n in enumerate(persistent):
+                ww = ws_widths[i]
+                act = (n == ws_active)
+                cr.set_source_rgb(*(ws_act_col if act else surface0))
+                _r = min(WS_R * sx, ws_h_px / 2, ww / 2)
+                _cr_rounded_rect(cr, wx_px, ws_y_px, ww, ws_h_px, _r)
+                cr.fill()
+                lo = _lo(str(n), 14, bold=True)
+                tw, th = _sz(lo)
+                cr.set_source_rgb(*(base if act else sub0))
+                cr.move_to(wx_px + (ww - tw) / 2, ws_y_px + (ws_h_px - th) / 2)
+                PangoCairo.show_layout(cr, lo)
+                wx_px += ww + sp_px
+
+        # ── module widths (natural px) → screen px ────────────────────────────
+        _arch_pl = self._cfg.get("custom/arch", {}).get("arch-pad-left",  8)
+        _arch_pr = self._cfg.get("custom/arch", {}).get("arch-pad-right", 8)
+        _arch_col_hex = _parse_arch_icon_color(self._cfg)
+        _arch_col_rgb = _hex_to_rgb(_arch_col_hex) if _arch_col_hex else None
+
+        def _mod_w_px(mod):
+            if mod == "hyprland/workspaces":
+                return ws_total_px + int(MOD_PH * 2 * sx)
+            s = (self._cfg.get("custom/arch", {}).get("arch-icon-glyph", "󰣇") if mod == "custom/arch" else MOD_SAMPLE.get(mod))
+            if s is None:
+                icon, name = MODULE_LABELS.get(mod, ("", mod.split("/")[-1]))
+                s = f"{icon} {name}" if icon else name
+            cpx    = (_arch_icon_sz if mod == "custom/arch" else font_sz)
+            bold   = (mod == "clock")
+            italic = (mod == "hyprland/window")
+            tw, _  = _sz(_lo(s, cpx, bold=bold, italic=italic))
+            if mod == "custom/arch":
+                return tw + int((_arch_pl + _arch_pr) * sx)
+            return tw + int(MOD_PH * 2 * sx)
+
+        def _zone_w_px(mods):
+            if not mods: return 0
+            sp = int(spacing * sx)
+            return (int(ZONE_PH * 2 * sx)
+                    + sum(_mod_w_px(m) for m in mods)
+                    + sp * max(0, len(mods) - 1))
+
+        # ── draw zone (positions already in screen px) ────────────────────────
+        def _draw_zone_px(zx_px, mods, pill=True):
+            if not mods: return
+            zw = _zone_w_px(mods)
+            zy = bar_y
+            bh = bar_h
+            r  = zone_r_nat * sx
+            pv = int(ZONE_PV * sx)
+            ph = int(ZONE_PH * sx)
+            sp = int(spacing * sx)
+
+            # Zone container (only in "islas" mode)
+            if pill:
+                cr.set_source_rgba(*base, self._cfg.get("opacity", 95) / 100)
+                _cr_rounded_rect(cr, zx_px, zy, zw, bh, r)
+                cr.fill()
+                cr.set_source_rgb(*surface0)
+                cr.set_line_width(1)
+                _cr_rounded_rect(cr, zx_px + .5, zy + .5, zw - 1, bh - 1, r)
+                cr.stroke()
+
+            # Selected highlight
+            mx = zx_px + ph
+            for mod in mods:
+                mw = _mod_w_px(mod)
+                if mod == self._selected_module:
+                    cr.set_source_rgba(*blue, 0.20)
+                    _cr_rounded_rect(cr, mx, zy + pv, mw, bh - pv * 2, 8 * sx)
+                    cr.fill()
+                mx += mw + sp
+
+            # Content
+            mx = zx_px + ph
+            for mod in mods:
+                mw  = _mod_w_px(mod)
+                col = blue if mod == self._selected_module else MOD_COLOR.get(mod, sub0)
+
+                if mod == "hyprland/workspaces":
+                    # workspaces draw function starts at mx+MOD_PH (in natural, but we're already in px)
+                    ws_h_px = int((bar_h_nat - WS_PV * 2) * sx)
+                    ws_y_px = int(WS_PV * sx) + bar_y
+                    wx_px   = mx + int(MOD_PH * sx)
+                    sp_px   = int(spacing * sx)
+                    for i, n in enumerate(persistent):
+                        ww = ws_widths[i]
+                        act = (n == ws_active)
+                        cr.set_source_rgb(*(ws_act_col if act else surface0))
+                        _r = min(WS_R * sx, ws_h_px / 2, ww / 2)
+                        _cr_rounded_rect(cr, wx_px, ws_y_px, ww, ws_h_px, _r)
+                        cr.fill()
+                        lo = _lo(str(n), 14, bold=True)
+                        tw, th = _sz(lo)
+                        cr.set_source_rgb(*(base if act else sub0))
+                        cr.move_to(wx_px + (ww - tw) / 2, ws_y_px + (ws_h_px - th) / 2)
+                        PangoCairo.show_layout(cr, lo)
+                        wx_px += ww + sp_px
+                else:
+                    s = (self._cfg.get("custom/arch", {}).get("arch-icon-glyph", "󰣇") if mod == "custom/arch" else MOD_SAMPLE.get(mod))
+                    if s is None:
+                        icon, name = MODULE_LABELS.get(mod, ("", mod.split("/")[-1]))
+                        s = f"{icon} {name}" if icon else name
+                    cpx    = (_arch_icon_sz if mod == "custom/arch" else font_sz)
+                    bold   = (mod == "clock")
+                    italic = (mod == "hyprland/window")
+                    lo = _lo(s, cpx, bold=bold, italic=italic)
+                    tw, th = _sz(lo)
+                    if mod == "custom/arch":
+                        draw_col = _arch_col_rgb if _arch_col_rgb else col
+                        tx = mx + int(_arch_pl * sx)
+                    else:
+                        draw_col = col
+                        tx = mx + (mw - tw) / 2
+                    cr.set_source_rgb(*draw_col)
+                    cr.move_to(tx, bar_y + (bar_h - th) / 2)
+                    PangoCairo.show_layout(cr, lo)
+
+                mx += mw + sp
+
+            # Separators (islas / barra only, not after last module)
+            if separators and bar_style in ("islands", "bar") and len(mods) > 1:
+                sep_inset = int(bar_h * 0.2)
+                cr.set_source_rgb(*overlay0)
+                cr.set_line_width(max(1.0, sx))
+                mx = zx_px + ph
+                for mod in mods[:-1]:
+                    mx += _mod_w_px(mod)
+                    sep_x = mx + max(sp, 2) / 2
+                    cr.move_to(sep_x, bar_y + sep_inset)
+                    cr.line_to(sep_x, bar_y + bar_h - sep_inset)
+                    cr.stroke()
+                    mx += sp
+
+        # ── layout ────────────────────────────────────────────────────────────
+        mods_l = self._cfg.get("modules-left",   [])
+        mods_c = self._cfg.get("modules-center",  [])
+        mods_r = self._cfg.get("modules-right",   [])
+        all_mods = mods_l + mods_c + mods_r
+
+        zw_l = _zone_w_px(mods_l)
+        zw_c = _zone_w_px(mods_c)
+        zw_r = _zone_w_px(mods_r)
+
+        if bar_style == "bar":
+            # Single full-width bar — no zone pills, transparent background zones
+            bar_x = ml_nat * sx
+            bar_w = AW - (ml_nat + mr_nat) * sx
+            cr.set_source_rgba(*base, self._cfg.get("opacity", 95) / 100)
+            _cr_rounded_rect(cr, bar_x, bar_y, bar_w, bar_h, zone_r_nat * sx)
+            cr.fill()
+            cr.set_source_rgb(*surface0)
+            cr.set_line_width(1)
+            _cr_rounded_rect(cr, bar_x + .5, bar_y + .5, bar_w - 1, bar_h - 1, zone_r_nat * sx)
+            cr.stroke()
+            # Draw zones without their own pill containers (pass draw_bg=False)
+            _draw_zone_px(ml_nat * sx,        mods_l,  pill=False)
+            _draw_zone_px((AW - zw_c) / 2,   mods_c,  pill=False)
+            _draw_zone_px(AW - mr_nat*sx - zw_r, mods_r, pill=False)
+
+        elif bar_style == "modules":
+            # Each module is its own individual pill
+            sp = int(spacing * sx)
+            ph = int(ZONE_PH * sx)
+            def _draw_mod_pills(x0_px, mods):
+                mx = x0_px
+                for mod in mods:
+                    mw = _mod_w_px(mod)
+                    cr.set_source_rgba(*base, self._cfg.get("opacity", 95) / 100)
+                    _cr_rounded_rect(cr, mx, bar_y, mw, bar_h, zone_r_nat * sx)
+                    cr.fill()
+                    cr.set_source_rgb(*surface0)
+                    cr.set_line_width(1)
+                    _cr_rounded_rect(cr, mx+.5, bar_y+.5, mw-1, bar_h-1, zone_r_nat*sx)
+                    cr.stroke()
+                    mx += mw + sp
+                return mx
+            total_r = sum(_mod_w_px(m) + sp for m in mods_r) - sp
+            _draw_mod_pills(ml_nat * sx, mods_l)
+            cx = (AW - sum(_mod_w_px(m) + sp for m in mods_c) + sp) / 2
+            _draw_mod_pills(cx, mods_c)
+            _draw_mod_pills(AW - mr_nat * sx - total_r, mods_r)
+            # draw content without pill containers
+            _draw_zone_px(ml_nat * sx,        mods_l,  pill=False)
+            _draw_zone_px((AW - zw_c) / 2,   mods_c,  pill=False)
+            _draw_zone_px(AW - mr_nat*sx - zw_r, mods_r, pill=False)
+
+        else:  # "islands" (default)
+            _draw_zone_px(ml_nat * sx,            mods_l)
+            _draw_zone_px((AW - zw_c) / 2,       mods_c)
+            _draw_zone_px(AW - mr_nat*sx - zw_r,  mods_r)
+
+    def _make_zone_editor(self, zone_key: str, zone_label: str) -> Gtk.Widget:
+        col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+
+        # Zone header
+        hdr = Gtk.Box()
+        hdr.get_style_context().add_class("zone-header")
+        hdr.pack_start(_lbl(zone_label, "section-title"), False, False, 0)
+        col.pack_start(hdr, False, False, 0)
+
+        inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        inner.set_margin_start(10)
+        inner.set_margin_end(10)
+        inner.set_margin_top(8)
+        inner.set_margin_bottom(8)
+
+        inner.pack_start(_hint("Drag to reorder"), False, False, 0)
+
+        store = Gtk.ListStore(str, str)
+        for mod in self._cfg.get(zone_key, []):
+            icon, name = MODULE_LABELS.get(mod, ("", mod))
+            store.append([mod, f"{icon}  {name}"])
+        self._w[f"zone_{zone_key}"] = store
+
+        tv = Gtk.TreeView(model=store)
+        tv.set_reorderable(True)
+        tv.set_headers_visible(False)
+        tv.append_column(Gtk.TreeViewColumn("", Gtk.CellRendererText(), text=1))
+
+        up_btn = Gtk.Button(label="▲")
+        up_btn.get_style_context().add_class("open-btn")
+        up_btn.connect("clicked", self._on_zone_move, tv, -1)
+
+        dn_btn = Gtk.Button(label="▼")
+        dn_btn.get_style_context().add_class("open-btn")
+        dn_btn.connect("clicked", self._on_zone_move, tv, +1)
+
+        arrow_col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        arrow_col.set_valign(Gtk.Align.CENTER)
+        arrow_col.pack_start(up_btn, False, False, 0)
+        arrow_col.pack_start(dn_btn, False, False, 0)
+
+        tv_row = Gtk.Box(spacing=4)
+        tv_row.pack_start(tv,        True,  True,  0)
+        tv_row.pack_start(arrow_col, False, False, 0)
+        inner.pack_start(tv_row, False, False, 0)
+
+        btn_row = Gtk.Box(spacing=4)
+        btn_row.set_margin_top(6)
+
+        add_btn = Gtk.Button(label="+ Add")
+        add_btn.get_style_context().add_class("open-btn")
+        add_btn.connect("clicked", self._on_zone_add, zone_key, store)
+
+        rm_btn = Gtk.Button(label="− Remove")
+        rm_btn.get_style_context().add_class("open-btn")
+        rm_btn.connect("clicked", self._on_zone_remove, tv)
+
+        btn_row.pack_start(add_btn, True, True, 0)
+        btn_row.pack_start(rm_btn,  True, True, 0)
+        inner.pack_start(btn_row, False, False, 0)
+
+        col.pack_start(inner, True, True, 0)
+        return col
+
+    def _load_default_bar(self, *_):
+        bar_keys = ("position", "height", "spacing", "margin-top", "margin-bottom",
+                    "margin-left", "margin-right", "font-family", "font-size",
+                    "bar-style", "opacity", "zone-radius", "border-width",
+                    "separators", "mod-padding")
+        for k in bar_keys:
+            if k in DEFAULTS:
+                self._cfg[k] = DEFAULTS[k]
+        self._cfg.pop("output", None)   # "All monitors"
+        self._rebuild_ui()
+        self._status("↺  Default bar settings restored.")
+
+    def _load_default_layout(self, *_):
+        for zone_key, mods in _DEFAULT_LAYOUT.items():
+            self._cfg[zone_key] = list(mods)
+            store = self._w.get(f"zone_{zone_key}")
+            if store:
+                store.clear()
+                for mod in mods:
+                    icon, name = MODULE_LABELS.get(mod, ("", mod))
+                    store.append([mod, f"{icon}  {name}"])
+        self._refresh_preview()
+        self._status("↺  Default layout restored.")
+
+    def _on_zone_add(self, _, zone_key, store):
+        dlg = Gtk.Dialog(title="Add module", parent=self, flags=Gtk.DialogFlags.MODAL)
+        dlg.add_buttons("Cancel", Gtk.ResponseType.CANCEL, "Add", Gtk.ResponseType.OK)
+        content = dlg.get_content_area()
+        content.set_margin_start(16)
+        content.set_margin_end(16)
+        content.set_margin_top(16)
+        content.set_margin_bottom(16)
+        sorted_mods = sorted(ALL_MODULES, key=lambda m: MODULE_LABELS.get(m, ("", m))[1].lower())
+        combo = _combo(
+            [f"{MODULE_LABELS[m][0]}  {MODULE_LABELS[m][1]}" for m in sorted_mods],
+            MODULE_LABELS[sorted_mods[0]][1],
+        )
+        content.add(combo)
+        dlg.show_all()
+        if dlg.run() == Gtk.ResponseType.OK:
+            idx = combo.get_active()
+            mod = sorted_mods[idx]
+            icon, name = MODULE_LABELS[mod]
+            store.append([mod, f"{icon}  {name}"])
+        dlg.destroy()
+
+    def _on_zone_remove(self, _, tv):
+        sel = tv.get_selection()
+        model, it = sel.get_selected()
+        if it:
+            model.remove(it)
+
+    def _on_zone_move(self, _, tv, direction):
+        sel = tv.get_selection()
+        model, it = sel.get_selected()
+        if not it:
+            return
+        path = model.get_path(it)
+        idx  = path.get_indices()[0]
+        target = idx + direction
+        if target < 0 or target >= len(model):
+            return
+        other = model.get_iter(Gtk.TreePath(target))
+        model.swap(it, other)
+        self._refresh_preview()
+
+    # ── page: Modules ─────────────────────────────────────────────────────────
+
+    def _page_modules(self) -> Gtk.Widget:
+        paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+        paned.set_position(210)
+
+        # Module list — col 0: key, col 1: label, col 2: is_header
+        left  = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        store = Gtk.ListStore(str, str, bool)
+
+        native_mods = sorted([m for m in ALL_MODULES if not m.startswith("custom/")],
+                             key=lambda m: MODULE_LABELS.get(m, ("", m))[1].lower())
+        custom_mods = sorted([m for m in ALL_MODULES if m.startswith("custom/")],
+                             key=lambda m: MODULE_LABELS.get(m, ("", m))[1].lower())
+
+        store.append(["", "Waybar modules", True])
+        for mod in native_mods:
+            icon, name = MODULE_LABELS.get(mod, ("", mod))
+            store.append([mod, f"{icon}  {name}", False])
+
+        store.append(["", "Custom modules", True])
+        for mod in custom_mods:
+            icon, name = MODULE_LABELS.get(mod, ("", mod))
+            store.append([mod, f"{icon}  {name}", False])
+
+        tv  = Gtk.TreeView(model=store)
+        tv.set_headers_visible(False)
+        col = Gtk.TreeViewColumn()
+        cr  = Gtk.CellRendererText()
+        col.pack_start(cr, True)
+
+        def _cell_data(_, cell, mdl, it, __):
+            is_hdr = mdl[it][2]
+            cell.set_property("text",   mdl[it][1])
+            cell.set_property("weight", 700 if is_hdr else 400)
+            cell.set_property("xpad",   6   if is_hdr else 16)
+            cell.set_property("foreground-set", is_hdr)
+            cell.set_property("foreground", self._theme.get("dim", "#888888"))
+
+        col.set_cell_data_func(cr, _cell_data)
+        tv.append_column(col)
+
+        tv.get_selection().set_select_function(
+            lambda _sel, mdl, path, _cur: not mdl[mdl.get_iter(path)][2]
+        )
+        tv.get_selection().connect("changed", self._on_module_selected)
+        self._w["module_tv"] = tv
+
+        sw = Gtk.ScrolledWindow()
+        sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        sw.add(tv)
+        left.pack_start(sw, True, True, 0)
+        paned.pack1(left, False, False)
+
+        # Module config panel
+        self._module_panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        ph = _lbl("← Select a module", "hint-label")
+        ph.set_valign(Gtk.Align.CENTER)
+        ph.set_halign(Gtk.Align.CENTER)
+        self._module_panel.pack_start(ph, True, True, 0)
+        paned.pack2(self._module_panel, True, False)
+        return paned
+
+    def _on_module_selected(self, selection):
+        model, it = selection.get_selected()
+        if not it:
+            return
+        self._collect_module_fields()
+        mod_key = model[it][0]
+        self._selected_module = mod_key
+        for child in self._module_panel.get_children():
+            self._module_panel.remove(child)
+        self._w["mod_fields"] = {}
+        panel = self._build_module_form(mod_key)
+        self._module_panel.pack_start(panel, True, True, 0)
+        self._module_panel.show_all()
+        self._refresh_preview()
+
+    def _build_module_form(self, mod: str) -> Gtk.Widget:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        box.set_margin_start(20)
+        box.set_margin_end(20)
+        box.set_margin_top(14)
+        box.set_margin_bottom(14)
+
+        icon, name = MODULE_LABELS.get(mod, ("", mod))
+        title = _lbl(f"{icon}  {name}", "module-title")
+        title.set_margin_bottom(14)
+        box.pack_start(title, False, False, 0)
+
+        cfg    = self._cfg.get(mod, {})
+        fields = self._w["mod_fields"]
+
+        def add_entry(label, key, value=""):
+            e = Gtk.Entry()
+            e.set_text(str(value))
+            fields[key] = e
+            box.pack_start(_field(label, e), False, False, 0)
+
+        def add_spin(label, key, value, lo, hi, step=1):
+            s = _spin(value, lo, hi, step)
+            fields[key] = s
+            box.pack_start(_row(label, s), False, False, 0)
+
+        def add_switch(label, key, value):
+            row, sw = _switch_row(label, bool(value))
+            fields[key] = sw
+            box.pack_start(row, False, False, 0)
+
+        def add_combo_entry(label, key, value, options):
+            combo = Gtk.ComboBoxText(has_entry=True)
+            for opt in options:
+                combo.append_text(opt)
+            child = combo.get_child()
+            child.set_text(str(value))
+            fields[key] = child
+            box.pack_start(_field(label, combo), False, False, 0)
+
+        if mod == "clock":
+            box.pack_start(_section("Clock"), False, False, 0)
+
+            _fmt_presets = [
+                "  {:%H:%M  |  %a %d %b}",
+                "  {:%H:%M}",
+                "  {:%H:%M:%S}",
+                "  {:%I:%M %p}",
+                "  {:%H:%M  |  %A %d %b}",
+                "  {:%H:%M  %d/%m/%Y}",
+            ]
+            _tooltip_presets = [
+                "",
+                "{:%A, %d %B %Y\n%H:%M:%S}",
+                "{:%A, %d de %B de %Y\n%H:%M:%S}",
+                "{:%d/%m/%Y %H:%M:%S}",
+            ]
+
+            add_combo_entry("Format",         "format",         cfg.get("format",         "  {:%H:%M  |  %a %d %b}"), _fmt_presets)
+            add_combo_entry("Tooltip format", "tooltip-format", cfg.get("tooltip-format", ""),                         _tooltip_presets)
+            add_entry("Timezone",          "timezone",        cfg.get("timezone",        "America/Monterrey"))
+            add_entry("Locale",            "locale",          cfg.get("locale",          "es_MX.utf8"))
+
+            _clk_prev = Gtk.Label(label="", xalign=0)
+            _clk_prev.set_ellipsize(Pango.EllipsizeMode.END)
+            box.pack_start(_field("Preview", _clk_prev), False, False, 0)
+
+            _clk_last_locale = [None]
+
+            def _update_clock_preview(*_):
+                now = datetime.datetime.now()
+                loc_e = fields.get("locale")
+                loc_str = loc_e.get_text().strip() if loc_e else ""
+                if loc_str and not loc_str.lower().endswith(".utf8"):
+                    loc_str = loc_str.split(".")[0] + ".utf8"
+                saved = locale.getlocale(locale.LC_TIME)
+                if loc_str != _clk_last_locale[0]:
+                    try:
+                        locale.setlocale(locale.LC_TIME, loc_str or "")
+                        _clk_last_locale[0] = loc_str
+                    except Exception:
+                        pass
+                e1 = fields.get("format")
+                fmt = e1.get_text() if e1 else ""
+                try:
+                    r1 = re.sub(r'\{:([^}]+)\}', lambda m: now.strftime(m.group(1)), fmt) if fmt.strip() else ""
+                except Exception:
+                    r1 = "(formato inválido)"
+                try:
+                    locale.setlocale(locale.LC_TIME, saved)
+                except Exception:
+                    pass
+                _clk_prev.set_markup(
+                    f'<span font_family="monospace" foreground="#abd290">{GLib.markup_escape_text(r1)}</span>'
+                    if r1 else ""
+                )
+
+            if fields.get("format"):
+                fields["format"].connect("changed", _update_clock_preview)
+            if fields.get("locale"):
+                fields["locale"].connect("changed", _update_clock_preview)
+            _update_clock_preview()
+            add_spin("Interval (s)",       "interval",        cfg.get("interval",        60), 1, 3600, 10)
+            add_entry("On click",          "on-click",        cfg.get("on-click",        "flatpak run com.ml4w.calendar"))
+            add_entry("On click right",    "on-click-right",  cfg.get("on-click-right",  ""))
+            add_entry("On click middle",   "on-click-middle", cfg.get("on-click-middle", ""))
+            add_switch("Tooltip",          "tooltip",         cfg.get("tooltip",         True))
+
+        elif mod == "cpu":
+            box.pack_start(_section("CPU"), False, False, 0)
+            add_entry("Format", "format", cfg.get("format", "󰍛 {usage}%"))
+            add_spin("Interval (s)", "interval", cfg.get("interval", 2), 1, 60)
+            add_switch("Tooltip", "tooltip", cfg.get("tooltip", True))
+
+        elif mod == "memory":
+            box.pack_start(_section("Memory"), False, False, 0)
+            add_entry("Format",         "format",         cfg.get("format", "󰾆 {used:0.1f}G"))
+            add_entry("Tooltip format", "tooltip-format", cfg.get("tooltip-format",
+                      "RAM: {used:0.1f}G / {total:0.1f}G"))
+            add_spin("Interval (s)", "interval", cfg.get("interval", 5), 1, 60)
+
+        elif mod == "network":
+            box.pack_start(_section("Network"), False, False, 0)
+            add_entry("Wi-Fi format",        "format-wifi",         cfg.get("format-wifi", "󰖩 {signalStrength}%"))
+            add_entry("Ethernet format",     "format-ethernet",     cfg.get("format-ethernet", "󰈀 {ipaddr}"))
+            add_entry("Disconnected format", "format-disconnected", cfg.get("format-disconnected", "󰖪 Sin red"))
+            add_entry("Tooltip format",      "tooltip-format",      cfg.get("tooltip-format", ""))
+            add_entry("On click",            "on-click",            cfg.get("on-click", "nm-connection-editor"))
+            add_spin("Interval (s)", "interval", cfg.get("interval", 5), 1, 60)
+
+        elif mod == "pulseaudio":
+            box.pack_start(_section("Audio"), False, False, 0)
+            add_entry("Format",        "format",       cfg.get("format", "{icon} {volume}%"))
+            add_entry("Muted format",  "format-muted", cfg.get("format-muted", "󰝟 mute"))
+            add_entry("On click",      "on-click",     cfg.get("on-click", "pavucontrol"))
+            add_spin("Scroll step (%)", "scroll-step", cfg.get("scroll-step", 5), 1, 20)
+
+        elif mod == "battery":
+            box.pack_start(_section("Battery"), False, False, 0)
+            add_entry("Format",          "format",          cfg.get("format", "{icon} {capacity}%"))
+            add_entry("Charging format", "format-charging", cfg.get("format-charging", "󰂄 {capacity}%"))
+            add_entry("Plugged format",  "format-plugged",  cfg.get("format-plugged",  "󰚥 {capacity}%"))
+            box.pack_start(_section("Thresholds"), False, False, 0)
+            add_spin("Warning (%)",  "states.warning",
+                     cfg.get("states", {}).get("warning", 30), 0, 100)
+            add_spin("Critical (%)", "states.critical",
+                     cfg.get("states", {}).get("critical", 15), 0, 100)
+
+        elif mod == "tray":
+            box.pack_start(_section("System tray"), False, False, 0)
+            add_spin("Spacing (px)", "spacing",   cfg.get("spacing", 8),   0, 32)
+            add_spin("Icon size",    "icon-size", cfg.get("icon-size", 18), 8, 48)
+
+        elif mod == "hyprland/workspaces":
+            box.pack_start(_section("Workspaces"), False, False, 0)
+            add_entry("Format",      "format",          cfg.get("format", "{id}"))
+            add_entry("Scroll up",   "on-scroll-up",    cfg.get("on-scroll-up", "hyprctl dispatch workspace e-1"))
+            add_entry("Scroll down", "on-scroll-down",  cfg.get("on-scroll-down", "hyprctl dispatch workspace e+1"))
+
+            box.pack_start(_section("Active workspace animation  (style.css)"), False, False, 0)
+            box.pack_start(_hint("Pulses between two colors — mirrors @keyframes ws-active"), False, False, 0)
+
+            for _label, _fkey, _default in (
+                ("Color 1  (start)", "anim-color-1", cfg.get("anim-color-1", "#2980b9")),
+                ("Color 2  (pulse)", "anim-color-2", cfg.get("anim-color-2", "#420ed2")),
+            ):
+                _val  = _default
+                _ent  = Gtk.Entry(); _ent.set_text(_val); _ent.set_size_request(90, -1)
+                _cbtn = _color_btn(_val); _cbtn.set_size_request(32, 28)
+                def _on_c(b, e, *_): e.set_text(_rgba_to_hex(b.get_rgba()))
+                def _on_h(e, b, *_):
+                    t = e.get_text().strip()
+                    if re.match(r'^#[0-9a-fA-F]{6}$', t): b.set_rgba(_hex_to_rgba(t))
+                _cbtn.connect("color-set", _on_c, _ent)
+                _ent.connect("changed", _on_h, _cbtn)
+                _ent.connect("changed", self._refresh_preview)
+                fields[_fkey] = _ent
+                _arow = Gtk.Box(spacing=8); _arow.set_margin_bottom(4)
+                _wlbl = Gtk.Label(label=_label); _wlbl.set_xalign(0); _wlbl.set_size_request(160, -1)
+                _arow.pack_start(_cbtn,  False, False, 0)
+                _arow.pack_start(_ent,   False, False, 0)
+                _arow.pack_start(_wlbl,  False, False, 0)
+                box.pack_start(_arow, False, False, 0)
+
+            add_spin("Duration (s)",    "anim-duration",  cfg.get("anim-duration",  3.0), 1, 30)
+
+            box.pack_start(_section("Shape  (style.css)"), False, False, 0)
+            box.pack_start(_hint("Tip: radius ≥ half the bar height + pad-v = circle"), False, False, 0)
+            add_spin("Border radius (px)", "button-radius", cfg.get("button-radius", 8),   0, 100)
+            add_spin("Padding vertical",  "button-pad-v",  cfg.get("button-pad-v",   4),   0, 30)
+            add_spin("Padding horizontal","button-pad-h",  cfg.get("button-pad-h",   14),  0, 60)
+            add_spin("Min width (px)",    "button-minw",   cfg.get("button-minw",    32),   0, 100)
+
+        elif mod == "hyprland/window":
+            box.pack_start(_section("Active window"), False, False, 0)
+            add_entry("Format", "format", cfg.get("format", "{}"))
+            add_spin("Max length", "max-length", cfg.get("max-length", 60), 10, 300)
+            add_switch("Separate outputs", "separate-outputs", cfg.get("separate-outputs", True))
+
+        elif mod == "custom/arch":
+            box.pack_start(_section("Logo"), False, False, 0)
+
+            fmt   = cfg.get("format", "")
+            m_sz  = re.search(r"font='[^']*\s(\d+)'", fmt)
+            m_col = re.search(r"color='(#[0-9a-fA-F]{6})'", fmt, re.IGNORECASE)
+            m_gl  = re.search(r">(.+?)</span>", fmt)
+            icon_size  = int(m_sz.group(1))  if m_sz  else 20
+            icon_color = m_col.group(1)       if m_col else ""
+            icon_glyph = cfg.get("arch-icon-glyph",
+                         m_gl.group(1) if m_gl else "󰣇")
+
+            # ── distro preset combo ────────────────────────────────────────────
+            distro_combo = Gtk.ComboBoxText()
+            for d_name, d_glyph in _DISTRO_ICONS:
+                distro_combo.append_text(d_name)
+
+            # select current distro by matching glyph, default to Custom
+            _matched_distro = False
+            for i, (d_name, d_glyph) in enumerate(_DISTRO_ICONS[:-1]):  # skip Custom
+                if d_glyph == icon_glyph:
+                    distro_combo.set_active(i)
+                    _matched_distro = True
+                    break
+            if not _matched_distro:
+                distro_combo.set_active(len(_DISTRO_ICONS) - 1)  # Custom
+
+            # ── custom glyph entry ─────────────────────────────────────────────
+            glyph_entry = Gtk.Entry()
+            glyph_entry.set_text(icon_glyph)
+            glyph_entry.set_size_request(60, -1)
+            glyph_entry.set_placeholder_text("glyph or text")
+            self._w["mod_fields"]["arch-icon-glyph"] = glyph_entry
+            glyph_entry.connect("changed", self._refresh_preview)
+
+            def _on_distro_pick(cb):
+                idx = cb.get_active()
+                if idx < 0: return
+                _, glyph = _DISTRO_ICONS[idx]
+                if glyph:
+                    glyph_entry.set_text(glyph)
+                else:  # Custom — clear and focus so user can type
+                    glyph_entry.set_text("")
+                    glyph_entry.grab_focus()
+            distro_combo.connect("changed", _on_distro_pick)
+
+            distro_row = Gtk.Box(spacing=6)
+            distro_row.pack_start(distro_combo, False, False, 0)
+            distro_row.pack_start(glyph_entry,  False, False, 0)
+            box.pack_start(_row("Distro / icon", distro_row), False, False, 0)
+            box.pack_start(_hint("Pick a preset or type any Nerd Font glyph / text in the box"), False, False, 0)
+
+            add_spin("Icon size (px)", "arch-icon-size", icon_size, 8, 64)
+
+            color_entry = Gtk.Entry()
+            color_entry.set_text(icon_color)
+            color_entry.set_size_request(90, -1)
+            color_entry.set_placeholder_text("#rrggbb  (empty = theme blue)")
+            color_entry.get_style_context().add_class("color-key")
+            self._w["mod_fields"]["arch-icon-color"] = color_entry
+
+            color_btn_arch = _color_btn(icon_color if icon_color else "#89b4fa")
+            color_btn_arch.set_size_request(36, 28)
+            def _on_arch_color(b, e):
+                e.set_text(_rgba_to_hex(b.get_rgba()))
+            color_btn_arch.connect("color-set", _on_arch_color, color_entry)
+            def _on_arch_hex(e, b):
+                t = e.get_text().strip()
+                if re.match(r'^#[0-9a-fA-F]{6}$', t):
+                    b.set_rgba(_hex_to_rgba(t))
+            color_entry.connect("changed", _on_arch_hex, color_btn_arch)
+            color_entry.connect("changed", self._refresh_preview)
+
+            arch_color_row = Gtk.Box(spacing=6)
+            arch_color_row.pack_start(color_btn_arch, False, False, 0)
+            arch_color_row.pack_start(color_entry,    False, False, 0)
+            box.pack_start(_row("Icon color", arch_color_row), False, False, 0)
+            box.pack_start(_hint("Empty color = uses the theme's blue accent"), False, False, 0)
+
+            box.pack_start(_section("Padding"), False, False, 0)
+            add_spin("Padding left (px)",  "arch-pad-left",  cfg.get("arch-pad-left",  8), 0, 60)
+            add_spin("Padding right (px)", "arch-pad-right", cfg.get("arch-pad-right", 8), 0, 60)
+
+            add_entry("On click", "on-click", cfg.get("on-click", ""))
+            add_switch("Tooltip", "tooltip", cfg.get("tooltip", False))
+
+        elif mod == "custom/weather":
+            box.pack_start(_section("Weather widget"), False, False, 0)
+            add_entry("Script (exec)", "exec",     cfg.get("exec", "$HOME/.config/waybar/scripts/weather.py"))
+            add_entry("On click",      "on-click", cfg.get("on-click", ""))
+            add_spin("Interval (s)", "interval", cfg.get("interval", 3600), 60, 7200, 60)
+            add_switch("Tooltip", "tooltip", cfg.get("tooltip", True))
+
+            # ── weather.conf editor ───────────────────────────────────────────
+            WCONF = os.path.expanduser("~/.config/waybar/weather.conf")
+            wconf = {}
+            try:
+                with open(WCONF) as _f:
+                    for _l in _f:
+                        _l = _l.strip()
+                        if "=" in _l and not _l.startswith("#"):
+                            _k, _v = _l.split("=", 1)
+                            wconf[_k.strip()] = _v.strip()
+            except FileNotFoundError:
+                pass
+
+            box.pack_start(_section("Weather config  (~/.config/waybar/weather.conf)"), False, False, 0)
+            box.pack_start(_hint("API key from openweathermap.org — never shared or saved in the script."), False, False, 0)
+
+            key_entry  = Gtk.Entry()
+            key_entry.set_text(wconf.get("API_KEY", ""))
+            key_entry.set_visibility(False)
+            key_entry.set_invisible_char("•")
+            city_entry = Gtk.Entry()
+            city_entry.set_text(wconf.get("CITY", "Monterrey"))
+            units_combo = _combo(["metric", "imperial"], wconf.get("UNITS", "metric"))
+
+            box.pack_start(_field("API Key", key_entry),       False, False, 0)
+            box.pack_start(_field("City",    city_entry),      False, False, 0)
+            box.pack_start(_row("Units",     units_combo),     False, False, 0)
+
+            def _save_wconf(_btn, _k=key_entry, _c=city_entry, _u=units_combo, _p=WCONF):
+                lines = [
+                    "# vsWaybar — Weather configuration\n",
+                    "# Get your free API key at https://openweathermap.org/api\n",
+                    f"API_KEY={_k.get_text().strip()}\n",
+                    f"CITY={_c.get_text().strip()}\n",
+                    f"UNITS={_u.get_active_text()}\n",
+                ]
+                try:
+                    with open(_p, "w") as _f:
+                        _f.writelines(lines)
+                    self._status("✓  weather.conf saved")
+                except Exception as e:
+                    self._err(f"Could not save weather.conf:\n{e}")
+
+            save_wconf_btn = Gtk.Button(label="💾  Save weather.conf")
+            save_wconf_btn.get_style_context().add_class("open-btn")
+            save_wconf_btn.set_margin_top(8)
+            save_wconf_btn.connect("clicked", _save_wconf)
+            box.pack_start(save_wconf_btn, False, False, 0)
+
+        elif mod == "custom/swaync":
+            box.pack_start(_section("Notifications — SwayNC"), False, False, 0)
+            add_entry("Exec",        "exec",           cfg.get("exec", "swaync-client -swb"))
+            add_entry("Exec-if",     "exec-if",        cfg.get("exec-if", "which swaync-client"))
+            add_entry("Click",       "on-click",       cfg.get("on-click", "swaync-client -t -sw"))
+            add_entry("Right click", "on-click-right", cfg.get("on-click-right", "swaync-client -d -sw"))
+            add_switch("Escape HTML", "escape", cfg.get("escape", True))
+
+        elif mod == "custom/updates":
+            box.pack_start(_section("Updates"), False, False, 0)
+            add_entry("Script (exec)", "exec",     cfg.get("exec", ""))
+            add_entry("On click",      "on-click", cfg.get("on-click", ""))
+            add_spin("Interval (s)", "interval", cfg.get("interval", 60), 10, 3600, 10)
+            add_switch("Tooltip", "tooltip", cfg.get("tooltip", False))
+
+            sep = Gtk.Separator()
+            sep.set_margin_top(14)
+            sep.set_margin_bottom(8)
+            box.pack_start(sep, False, False, 0)
+
+            def _set_updates(exec_cmd=None, click_cmd=None, _f=fields):
+                if exec_cmd and "exec" in _f:
+                    _f["exec"].set_text(exec_cmd)
+                if click_cmd and "on-click" in _f:
+                    _f["on-click"].set_text(click_cmd)
+
+            _EXEC_SCRIPT  = "count=$(checkupdates 2>/dev/null | wc -l); [ \"$count\" -gt 0 ] && echo '{\"text\":\"󰚰 '\"$count\"'\",\"class\":\"pending\"}' || echo '{\"text\":\"󰚰 0\",\"class\":\"updated\"}'"
+            _EXEC_PACMAN  = "count=$(checkupdates 2>/dev/null | wc -l); [ \"$count\" -gt 0 ] && echo '{\"text\":\"󰚰 '\"$count\"'\",\"class\":\"pending\"}' || echo '{\"text\":\"󰚰 0\",\"class\":\"updated\"}'"
+            _EXEC_YAY     = "count=$(checkupdates 2>/dev/null | wc -l); aur=$(yay -Qu --aur 2>/dev/null | wc -l); total=$((count+aur)); [ \"$total\" -gt 0 ] && echo '{\"text\":\"󰚰 '\"$total\"'\",\"class\":\"pending\"}' || echo '{\"text\":\"󰚰 0\",\"class\":\"updated\"}'"
+            _CLICK_SCRIPT = "kitty --class floating-terminal -e ~/.config/hypr/scripts/install-updates.sh"
+            _CLICK_PACMAN = "kitty -e sudo pacman -Syu"
+            _CLICK_YAY    = "kitty -e yay -Syu"
+
+            btn_row = Gtk.Box(spacing=6)
+            sc_btn = Gtk.Button(label="↺  custom script")
+            sc_btn.get_style_context().add_class("open-btn")
+            sc_btn.connect("clicked", lambda _, e=_EXEC_SCRIPT, c=_CLICK_SCRIPT: _set_updates(e, c))
+            pm_btn = Gtk.Button(label="↺  pacman")
+            pm_btn.get_style_context().add_class("open-btn")
+            pm_btn.connect("clicked", lambda _, e=_EXEC_PACMAN, c=_CLICK_PACMAN: _set_updates(e, c))
+            yay_btn = Gtk.Button(label="↺  yay")
+            yay_btn.get_style_context().add_class("open-btn")
+            yay_btn.connect("clicked", lambda _, e=_EXEC_YAY, c=_CLICK_YAY: _set_updates(e, c))
+            btn_row.pack_start(sc_btn,  True, True, 0)
+            btn_row.pack_start(pm_btn,  True, True, 0)
+            btn_row.pack_start(yay_btn, True, True, 0)
+            box.pack_start(btn_row, False, False, 0)
+
+        elif mod == "custom/power":
+            box.pack_start(_section("Power menu"), False, False, 0)
+            add_entry("Format",   "format",   cfg.get("format", "⏻"))
+            add_entry("On click", "on-click", cfg.get("on-click", "wlogout"))
+            add_switch("Tooltip", "tooltip", cfg.get("tooltip", False))
+
+            sep = Gtk.Separator()
+            sep.set_margin_top(14)
+            sep.set_margin_bottom(8)
+            box.pack_start(sep, False, False, 0)
+
+            def _set_onclick(cmd, _f=fields):
+                if "on-click" in _f:
+                    _f["on-click"].set_text(cmd)
+
+            btn_row = Gtk.Box(spacing=6)
+            wl_btn = Gtk.Button(label="↺  wlogout")
+            wl_btn.get_style_context().add_class("open-btn")
+            wl_btn.connect("clicked", lambda _, c="wlogout -b 3 -c 20 -r 20 -L 400 -R 400 -T 200 -B 200 --protocol layer-shell": _set_onclick(c))
+            rofi_btn = Gtk.Button(label="↺  rofi power-menu")
+            rofi_btn.get_style_context().add_class("open-btn")
+            rofi_btn.connect("clicked", lambda _, c="rofi -show power-menu -modi 'power-menu:rofi-power-menu'": _set_onclick(c))
+            btn_row.pack_start(wl_btn,   True, True, 0)
+            btn_row.pack_start(rofi_btn, True, True, 0)
+            box.pack_start(btn_row, False, False, 0)
+
+        elif mod == "bluetooth":
+            box.pack_start(_section("Bluetooth"), False, False, 0)
+            add_entry("Format",           "format",           cfg.get("format", "󰂯"))
+            add_entry("Format disabled",  "format-disabled",  cfg.get("format-disabled", "󰂲"))
+            add_entry("Format connected", "format-connected", cfg.get("format-connected", "󰂱 {device_alias}"))
+            add_entry("On click",         "on-click",         cfg.get("on-click", "/usr/bin/blueman-manager"))
+            add_spin("Interval (s)", "interval", cfg.get("interval", 30), 1, 300)
+            add_switch("Tooltip", "tooltip", cfg.get("tooltip", True))
+
+        elif mod == "temperature":
+            box.pack_start(_section("Temperature"), False, False, 0)
+            add_entry("Format",          "format",          cfg.get("format", " {temperatureC}°C"))
+            add_entry("Format critical", "format-critical", cfg.get("format-critical", " {temperatureC}°C"))
+            add_spin("Critical threshold (°C)", "critical-threshold",
+                     cfg.get("critical-threshold", 80), 50, 120)
+            add_spin("Interval (s)", "interval", cfg.get("interval", 5), 1, 60)
+            add_switch("Tooltip", "tooltip", cfg.get("tooltip", True))
+
+        elif mod == "disk":
+            box.pack_start(_section("Disk"), False, False, 0)
+            add_entry("Format",   "format", cfg.get("format", "<span font='JetBrainsMono Nerd Font Mono 12'>󰋊</span> {percentage_used}%"))
+            add_entry("Path",     "path",   cfg.get("path", "/"))
+            add_spin("Interval (s)", "interval", cfg.get("interval", 30), 5, 300)
+            add_switch("Tooltip", "tooltip", cfg.get("tooltip", True))
+
+        elif mod == "backlight":
+            box.pack_start(_section("Backlight"), False, False, 0)
+            add_entry("Format",         "format",           cfg.get("format", "{icon} {percent}%"))
+            add_entry("Scroll up cmd",  "on-scroll-up",     cfg.get("on-scroll-up",   "brightnessctl set 5%+"))
+            add_entry("Scroll down cmd","on-scroll-down",   cfg.get("on-scroll-down", "brightnessctl set 5%-"))
+
+        elif mod == "idle_inhibitor":
+            box.pack_start(_section("Idle Inhibitor"), False, False, 0)
+            add_entry("Format",     "format",              cfg.get("format", "<span font='JetBrainsMono Nerd Font Mono 12'>{icon}</span>"))
+            add_entry("Activated",  "format-icons.activated",   cfg.get("format-icons", {}).get("activated",   "󰾪"))
+            add_entry("Deactivated","format-icons.deactivated", cfg.get("format-icons", {}).get("deactivated", "󰾩"))
+
+        elif mod == "mpris":
+            box.pack_start(_section("MPRIS"), False, False, 0)
+            add_entry("Format",        "format",        cfg.get("format",        "{player_icon} {title}"))
+            add_entry("Format paused", "format-paused", cfg.get("format-paused", "{player_icon}  {title}"))
+            add_spin("Interval (s)",  "interval",   cfg.get("interval",   1), 1, 10)
+            add_spin("Max length",    "max-length",  cfg.get("max-length", 40), 10, 100)
+
+        elif mod == "wireplumber":
+            box.pack_start(_section("Wireplumber"), False, False, 0)
+            add_entry("Format",       "format",       cfg.get("format",       "<span font='JetBrainsMono Nerd Font Mono 12'>󰕾</span> {volume}%"))
+            add_entry("Muted format", "format-muted", cfg.get("format-muted", "<span font='JetBrainsMono Nerd Font Mono 12'>󰝟</span> mute"))
+            add_entry("On click",     "on-click",     cfg.get("on-click",     "pavucontrol"))
+            add_spin("Scroll step (%)", "scroll-step", cfg.get("scroll-step", 5), 1, 20)
+
+        elif mod == "privacy":
+            box.pack_start(_section("Privacy"), False, False, 0)
+            add_spin("Icon size",    "icon-size",    cfg.get("icon-size",    18), 8, 48)
+            add_spin("Icon spacing", "icon-spacing", cfg.get("icon-spacing", 4),  0, 20)
+            add_spin("Transition (ms)", "transition-duration",
+                     cfg.get("transition-duration", 250), 0, 1000, 50)
+
+        elif mod == "notifd":
+            box.pack_start(_section("Notifd"), False, False, 0)
+            add_entry("Format",       "format",          cfg.get("format", "<span font='JetBrainsMono Nerd Font Mono 12'>󰂚</span> {count}"))
+            add_entry("Click",        "on-click",        cfg.get("on-click",       "swaync-client -t -sw"))
+            add_entry("Right click",  "on-click-right",  cfg.get("on-click-right", "swaync-client -d -sw"))
+            add_switch("Escape HTML", "escape",          cfg.get("escape", True))
+            add_switch("Tooltip",     "tooltip",         cfg.get("tooltip", False))
+
+        elif mod == "wlr/taskbar":
+            box.pack_start(_section("Taskbar"), False, False, 0)
+            add_entry("Format",       "format",          cfg.get("format",          "{icon}"))
+            add_entry("On click",     "on-click",        cfg.get("on-click",        "activate"))
+            add_entry("On click mid", "on-click-middle", cfg.get("on-click-middle", "close"))
+            add_spin("Icon size", "icon-size", cfg.get("icon-size", 18), 8, 48)
+            add_switch("Tooltip", "tooltip", cfg.get("tooltip", True))
+
+        else:
+            box.pack_start(_hint("No configuration available."), False, False, 0)
+
+        if mod in MODULE_DEFAULTS and mod not in ("custom/power", "custom/updates"):
+            sep = Gtk.Separator()
+            sep.set_margin_top(14)
+            sep.set_margin_bottom(8)
+            box.pack_start(sep, False, False, 0)
+
+            def _on_load_defaults(_btn, _mod=mod, _fields=fields):
+                defs = MODULE_DEFAULTS.get(_mod, {})
+
+                # ── directly update cfg so preview is always correct ───────────
+                if _mod == "custom/arch":
+                    sz    = defs.get("arch-icon-size",  20)
+                    col   = defs.get("arch-icon-color", "")
+                    glyph = defs.get("arch-icon-glyph", "󰣇")
+                    col_attr = f" color='{col}'" if re.match(r'^#[0-9a-fA-F]{6}$', col, re.IGNORECASE) else ""
+                    ac = self._cfg.setdefault("custom/arch", {})
+                    ac["format"]          = f"<span font='JetBrainsMono Nerd Font Mono {sz}'{col_attr}>{glyph}</span>"
+                    ac["arch-icon-glyph"] = glyph
+                    ac["arch-pad-left"]   = defs.get("arch-pad-left",  15)
+                    ac["arch-pad-right"]  = defs.get("arch-pad-right", 10)
+
+                # ── update widgets ─────────────────────────────────────────────
+                for key, val in defs.items():
+                    if key not in _fields:
+                        continue
+                    w = _fields[key]
+                    if isinstance(w, Gtk.SpinButton):
+                        w.set_value(float(val))
+                    elif isinstance(w, Gtk.Entry):
+                        w.set_text(str(val))
+                    elif isinstance(w, Gtk.Switch):
+                        w.set_active(bool(val))
+
+                self._refresh_preview()
+
+            def_btn = Gtk.Button(label="↺  Load defaults for this module")
+            def_btn.get_style_context().add_class("open-btn")
+            def_btn.connect("clicked", _on_load_defaults)
+            box.pack_start(def_btn, False, False, 0)
+
+        return _scrolled(box)
+
+    # ── page: Styling ─────────────────────────────────────────────────────────
+
+    def _page_styling(self) -> Gtk.Widget:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        box.set_margin_start(28)
+        box.set_margin_end(28)
+        box.set_margin_top(8)
+        box.set_margin_bottom(20)
+
+        if "css_hex_entries" not in self._w:
+            self._w["css_hex_entries"] = {}
+
+        box.pack_start(_section("CSS Colors  (@define-color)"), False, False, 0)
+        box.pack_start(_hint("Edit the hex or use the color picker — applied on save / preview."), False, False, 0)
+
+        # Generator row
+        gen_row = Gtk.Box(spacing=8)
+        gen_row.set_margin_bottom(4)
+
+        rnd_combo = Gtk.ComboBoxText()
+        rnd_combo.append("dark",  "Dark")
+        rnd_combo.append("light", "Light")
+        rnd_combo.set_active_id("dark")
+        rnd_combo.set_tooltip_text("Palette style: applies to all three generation buttons")
+        self._rnd_mode = rnd_combo
+
+        img_btn = Gtk.Button(label="󰸉  From image…")
+        img_btn.get_style_context().add_class("open-btn")
+        img_btn.set_tooltip_text("Extract palette from any image using matugen")
+        img_btn.connect("clicked", self._load_palette_from_image)
+
+        color_btn_gen = Gtk.Button(label="  From color…")
+        color_btn_gen.get_style_context().add_class("open-btn")
+        color_btn_gen.set_tooltip_text("Generate palette from a single base color using matugen")
+        color_btn_gen.connect("clicked", self._load_palette_from_color)
+
+        rnd_btn = Gtk.Button(label="🎲  Random")
+        rnd_btn.get_style_context().add_class("open-btn")
+        rnd_btn.set_tooltip_text("Generate a random coherent palette")
+        rnd_btn.connect("clicked", self._random_palette)
+
+        mocha_btn = Gtk.Button(label="↺  Catppuccin Mocha")
+        mocha_btn.get_style_context().add_class("open-btn")
+        mocha_btn.set_tooltip_text("Restore the Catppuccin Mocha default palette")
+        mocha_btn.connect("clicked", self._load_mocha_palette)
+
+        gen_row.pack_start(rnd_combo,     False, False, 0)
+        gen_row.pack_start(img_btn,       False, False, 0)
+        gen_row.pack_start(color_btn_gen, False, False, 0)
+        gen_row.pack_start(rnd_btn,       False, False, 0)
+        gen_row.pack_start(mocha_btn,     False, False, 0)
+        box.pack_start(gen_row, False, False, 0)
+        box.pack_start(
+            _hint("Dark / Light governs all three buttons · From image / color requires matugen"),
+            False, False, 0,
+        )
+
+        color_descs = {
+            "base":     "Main bar background",
+            "mantle":   "Tooltips and floating surfaces",
+            "crust":    "Variant background (crust)",
+            "surface0": "Module background",
+            "surface1": "Elevated modules",
+            "overlay0": "Workspaces / indicators",
+            "text":     "Primary text",
+            "subtext0": "Secondary text (window title)",
+            "blue":     "Primary accent  (arch, clock, audio)",
+            "mauve":    "Memory / alt accent",
+            "red":      "Critical states / power button",
+            "green":    "Network / battery",
+            "yellow":   "Warnings / dark olive",
+            "peach":    "CPU / peach",
+        }
+
+        for name, desc in color_descs.items():
+            val = self._css_colors.get(name, "#000000")
+
+            btn = _color_btn(val)
+            btn.set_size_request(36, 28)
+
+            hex_entry = Gtk.Entry()
+            hex_entry.set_text(val)
+            hex_entry.set_size_request(90, -1)
+            hex_entry.get_style_context().add_class("color-key")
+            self._w["css_hex_entries"][name] = hex_entry
+            self._w["css_colors"][name] = btn
+
+            # ColorButton → hex entry
+            def _on_color(b, e, *_):
+                e.set_text(_rgba_to_hex(b.get_rgba()))
+            btn.connect("color-set", _on_color, hex_entry)
+
+            # hex entry → ColorButton (only on valid 6-char hex)
+            def _on_hex(e, b, *_):
+                t = e.get_text().strip()
+                if re.match(r'^#[0-9a-fA-F]{6}$', t, re.IGNORECASE):
+                    b.set_rgba(_hex_to_rgba(t))
+            hex_entry.connect("changed", _on_hex, btn)
+
+            row = Gtk.Box(spacing=10)
+            row.set_margin_bottom(5)
+            lbl_name = _lbl(f"@{name}", "color-key")
+            lbl_name.set_size_request(90, -1)
+            lbl_desc = _lbl(desc)
+            row.pack_start(btn,       False, False, 0)
+            row.pack_start(hex_entry, False, False, 0)
+            row.pack_start(lbl_name,  False, False, 0)
+            row.pack_start(lbl_desc,  False, False, 0)
+            box.pack_start(row, False, False, 0)
+
+        return _scrolled(box)
+
+    # ── page: Scripts ─────────────────────────────────────────────────────────
+
+    # (label, system_path, description, default_src)
+    # default_src: path relative to this script's directory, or None
+    _SCRIPTS = [
+        ("󰖙  Weather fetcher",
+         "~/.config/waybar/scripts/weather.py",
+         "API key and city are in weather.conf — not in this script.",
+         "weather.py"),
+        ("󰖐  Weather fallback",
+         "~/.config/waybar/scripts/weather.sh",
+         "Fallback weather via wttr.in (used if weather.py fails).",
+         None),
+        ("󰚰  Install updates",
+         "~/.config/hypr/scripts/install-updates.sh",
+         "ML4W updater — runs yay + flatpak update in a terminal with gum.",
+         None),
+    ]
+
+    def _page_scripts(self) -> Gtk.Widget:
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        outer.set_margin_start(20)
+        outer.set_margin_end(20)
+        outer.set_margin_top(14)
+        outer.set_margin_bottom(14)
+
+        # ── selector row ──────────────────────────────────────────────────────
+        outer.pack_start(_section("Scripts"), False, False, 0)
+
+        sel_row = Gtk.Box(spacing=8)
+        sel_row.set_margin_bottom(6)
+        combo = Gtk.ComboBoxText()
+        for label, *_ in self._SCRIPTS:
+            combo.append_text(label)
+        combo.set_active(0)
+        sel_row.pack_start(combo, True, True, 0)
+        outer.pack_start(sel_row, False, False, 0)
+
+        # ── path hint ─────────────────────────────────────────────────────────
+        path_lbl = _hint(os.path.expanduser(self._SCRIPTS[0][1]))
+        desc_lbl = _hint(self._SCRIPTS[0][2])
+        outer.pack_start(path_lbl, False, False, 0)
+        outer.pack_start(desc_lbl, False, False, 0)
+
+        # ── editor ────────────────────────────────────────────────────────────
+        tv = Gtk.TextView()
+        tv.set_monospace(True)
+        tv.get_buffer().set_text(self._read_script(self._SCRIPTS[0][1]))
+
+        sw = Gtk.ScrolledWindow()
+        sw.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        sw.add(tv)
+        sw.set_size_request(-1, 340)
+        outer.pack_start(sw, True, True, 0)
+
+        self._w["script_tv"]   = tv
+        self._w["script_combo"] = combo
+
+        # ── save buttons ──────────────────────────────────────────────────────
+        btn_row = Gtk.Box(spacing=8)
+        btn_row.set_margin_top(8)
+
+        save_btn = Gtk.Button(label="💾  Save script")
+        save_btn.get_style_context().add_class("open-btn")
+        save_btn.set_tooltip_text("Saves to original path — backs up with timestamp first")
+        save_btn.connect("clicked", self._save_current_script)
+
+        saveas_btn = Gtk.Button(label="💾  Save as…")
+        saveas_btn.get_style_context().add_class("open-btn")
+        saveas_btn.connect("clicked", self._save_script_as)
+
+        def_btn = Gtk.Button(label="↺  Load default")
+        def_btn.get_style_context().add_class("open-btn")
+        def_btn.set_tooltip_text("Restore the original bundled version of this script")
+        def_btn.connect("clicked", self._load_default_script)
+        self._w["script_def_btn"] = def_btn
+
+        btn_row.pack_start(save_btn,   False, False, 0)
+        btn_row.pack_start(saveas_btn, False, False, 0)
+        btn_row.pack_start(def_btn,    False, False, 0)
+        outer.pack_start(btn_row, False, False, 0)
+
+        # ── combo change → reload editor ──────────────────────────────────────
+        def _on_script_change(cb):
+            idx = cb.get_active()
+            if idx < 0: return
+            _, path, desc, _dsrc = self._SCRIPTS[idx]
+            path_lbl.set_text(os.path.expanduser(path))
+            desc_lbl.set_text(desc)
+            tv.get_buffer().set_text(self._read_script(path))
+
+        combo.connect("changed", _on_script_change)
+
+        return outer
+
+    def _read_script(self, path: str) -> str:
+        try:
+            with open(os.path.expanduser(path)) as f:
+                return f.read()
+        except FileNotFoundError:
+            return f"# {os.path.expanduser(path)}\n# File not found\n"
+
+    def _script_text(self) -> str | None:
+        tv = self._w.get("script_tv")
+        if not tv: return None
+        buf = tv.get_buffer()
+        return buf.get_text(*buf.get_bounds(), True)
+
+    def _save_current_script(self, *_):
+        combo = self._w.get("script_combo")
+        if not combo: return
+        idx = combo.get_active()
+        if idx < 0: return
+        _, path, _, _dsrc = self._SCRIPTS[idx]
+        path = os.path.expanduser(path)
+        text = self._script_text()
+        if text is None: return
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            # backup if file already exists
+            if os.path.exists(path):
+                import datetime
+                ts  = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                bak = f"{path}.{ts}.bak"
+                import shutil as _sh
+                _sh.copy2(path, bak)
+            with open(path, "w") as f:
+                f.write(text)
+            self._status(f"✓  Saved  {os.path.basename(path)}", "· backup created")
+        except Exception as e:
+            self._err(f"Error saving script:\n{e}")
+
+    def _save_script_as(self, *_):
+        text = self._script_text()
+        if text is None: return
+        combo = self._w.get("script_combo")
+        idx   = combo.get_active() if combo else 0
+        _, default_path, _, _dsrc = self._SCRIPTS[idx] if idx >= 0 else self._SCRIPTS[0]
+        dlg = Gtk.FileChooserDialog(
+            title="Save script as…", parent=self,
+            action=Gtk.FileChooserAction.SAVE,
+            buttons=("Cancel", Gtk.ResponseType.CANCEL, "Save", Gtk.ResponseType.OK),
+        )
+        dlg.set_current_name(os.path.basename(os.path.expanduser(default_path)))
+        if dlg.run() == Gtk.ResponseType.OK:
+            path = dlg.get_filename()
+            dlg.destroy()
+            try:
+                with open(path, "w") as f:
+                    f.write(text)
+                self._status(f"✓  Saved as  {os.path.basename(path)}")
+            except Exception as e:
+                self._err(f"Error saving:\n{e}")
+        else:
+            dlg.destroy()
+
+    def _load_default_script(self, *_):
+        combo = self._w.get("script_combo")
+        if not combo: return
+        idx = combo.get_active()
+        if idx < 0: return
+        _, _, _, default_src = self._SCRIPTS[idx]
+        if not default_src:
+            self._status("No bundled default for this script.")
+            return
+        app_dir  = os.path.dirname(os.path.abspath(__file__))
+        src_path = os.path.join(app_dir, default_src)
+        try:
+            with open(src_path) as f:
+                text = f.read()
+        except FileNotFoundError:
+            self._err(f"Default not found:\n{src_path}")
+            return
+        tv = self._w.get("script_tv")
+        if tv:
+            tv.get_buffer().set_text(text)
+        self._status("↺  Default loaded — press Save to apply.")
+
+    # ── random palette ────────────────────────────────────────────────────────
+
+    def _load_mocha_palette(self, *_):
+        self._apply_palette(_CATPPUCCIN_MOCHA)
+        self._status("↺  Catppuccin Mocha palette loaded.")
+
+    def _apply_palette(self, palette: dict):
+        for name, hex_val in palette.items():
+            self._css_colors[name] = hex_val
+            btn = self._w["css_colors"].get(name)
+            if btn:
+                btn.set_rgba(_hex_to_rgba(hex_val))
+            entry = self._w["css_hex_entries"].get(name)
+            if entry:
+                entry.set_text(hex_val)
+        self._refresh_preview()
+
+    def _random_palette(self, *_):
+        mode = "dark"
+        if self._rnd_mode:
+            mode = self._rnd_mode.get_active_id() or "dark"
+
+        h = random.random()          # base hue  0..1
+        offset = lambda d: (h + d) % 1.0
+
+        if mode == "dark":
+            palette = {
+                "base":     _hsv_to_hex(h,            0.30, 0.08),
+                "mantle":   _hsv_to_hex(h,            0.28, 0.28),
+                "crust":    _hsv_to_hex(h,            0.30, 0.08),
+                "surface0": _hsv_to_hex(h,            0.22, 0.13),
+                "surface1": _hsv_to_hex(h,            0.20, 0.18),
+                "overlay0": _hsv_to_hex(h,            0.18, 0.22),
+                "text":     _hsv_to_hex(h,            0.12, 0.90),
+                "subtext0": _hsv_to_hex(h,            0.14, 0.77),
+                "blue":     _hsv_to_hex(offset(0.25), 0.42, 0.82),
+                "mauve":    _hsv_to_hex(offset(0.25), 0.40, 0.82),
+                "red":      _hsv_to_hex(offset(0.55), 0.38, 1.00),
+                "green":    _hsv_to_hex(offset(0.42), 0.36, 0.82),
+                "yellow":   _hsv_to_hex(h,            0.30, 0.30),
+                "peach":    _hsv_to_hex(offset(0.42), 0.50, 0.32),
+            }
+        else:  # light
+            palette = {
+                "base":     _hsv_to_hex(h,            0.10, 0.96),
+                "mantle":   _hsv_to_hex(h,            0.12, 0.90),
+                "crust":    _hsv_to_hex(h,            0.10, 0.96),
+                "surface0": _hsv_to_hex(h,            0.13, 0.82),
+                "surface1": _hsv_to_hex(h,            0.15, 0.74),
+                "overlay0": _hsv_to_hex(h,            0.16, 0.65),
+                "text":     _hsv_to_hex(h,            0.28, 0.12),
+                "subtext0": _hsv_to_hex(h,            0.22, 0.30),
+                "blue":     _hsv_to_hex(offset(0.25), 0.60, 0.55),
+                "mauve":    _hsv_to_hex(offset(0.25), 0.58, 0.55),
+                "red":      _hsv_to_hex(offset(0.55), 0.65, 0.70),
+                "green":    _hsv_to_hex(offset(0.42), 0.55, 0.52),
+                "yellow":   _hsv_to_hex(h,            0.45, 0.55),
+                "peach":    _hsv_to_hex(offset(0.42), 0.62, 0.62),
+            }
+
+        entries = self._w.get("css_hex_entries", {})
+        buttons = self._w.get("css_colors", {})
+        for name, val in palette.items():
+            self._css_colors[name] = val
+            if name in entries:
+                entries[name].set_text(val)
+            if name in buttons:
+                buttons[name].set_rgba(_hex_to_rgba(val))
+
+        self._refresh_preview()
+        self._status(f"🎲  Palette {mode} — hue {int(h * 360)}°")
+
+    # ── matugen palette ───────────────────────────────────────────────────────
+
+    def _load_palette_from_image(self, *_):
+        if not shutil.which("matugen"):
+            self._err("matugen not found.\n\nInstall it with:\n  yay -S matugen")
+            return
+        img = _file_chooser(self, "Select image for palette extraction",
+                            mime_types=["image/png", "image/jpeg", "image/webp",
+                                        "image/jpg", "image/bmp"])
+        if not img:
+            return
+        mode = self._rnd_mode.get_active_id() if self._rnd_mode else "dark"
+        try:
+            result = subprocess.run(
+                ["matugen", "image", img, "-m", mode, "-j", "hex",
+                 "--source-color-index", "0", "--dry-run"],
+                capture_output=True, text=True, timeout=15,
+            )
+            if result.returncode != 0 or not result.stdout.strip():
+                result = subprocess.run(
+                    ["matugen", "image", img, "-m", mode, "-j", "hex",
+                     "--source-color-index", "0"],
+                    capture_output=True, text=True, timeout=15,
+                )
+            if not result.stdout.strip():
+                self._err(f"matugen produced no output.\n{result.stderr.strip()}")
+                return
+            colors = json.loads(result.stdout)["colors"]
+        except Exception as e:
+            self._err(f"matugen failed:\n{e}")
+            return
+        self._apply_matugen_colors(colors, "󰸉  Palette extracted from image")
+
+    def _load_palette_from_color(self, *_):
+        if not shutil.which("matugen"):
+            self._err("matugen not found.\n\nInstall it with:\n  yay -S matugen")
+            return
+        dlg = Gtk.ColorChooserDialog(title="Pick a base color", parent=self)
+        if dlg.run() != Gtk.ResponseType.OK:
+            dlg.destroy()
+            return
+        rgba = dlg.get_rgba()
+        dlg.destroy()
+        hex_color = _rgba_to_hex(rgba)
+        mode = self._rnd_mode.get_active_id() if self._rnd_mode else "dark"
+        try:
+            result = subprocess.run(
+                ["matugen", "color", "hex", hex_color,
+                 "-m", mode, "-j", "hex", "--dry-run"],
+                capture_output=True, text=True, timeout=15,
+            )
+            if not result.stdout.strip():
+                self._err(f"matugen produced no output.\n{result.stderr.strip()}")
+                return
+            colors = json.loads(result.stdout)["colors"]
+        except Exception as e:
+            self._err(f"matugen failed:\n{e}")
+            return
+        self._apply_matugen_colors(colors, f"  Palette from {hex_color}")
+
+    def _apply_matugen_colors(self, colors: dict, source_label: str):
+        entries  = self._w.get("css_hex_entries", {})
+        buttons  = self._w.get("css_colors", {})
+        applied  = 0
+        for css_key, m3_role in _MATUGEN_MAP.items():
+            try:
+                hex_val = colors[m3_role]["default"]["color"]
+            except (KeyError, TypeError):
+                continue
+            if css_key in entries:
+                entries[css_key].set_text(hex_val)
+                applied += 1
+            if css_key in buttons:
+                buttons[css_key].set_rgba(_hex_to_rgba(hex_val))
+        self._refresh_preview()
+        self._status(
+            f"{source_label}  ({applied}/{len(_MATUGEN_MAP)} colors)",
+            "·  Review colors above  ·  Save to apply",
+        )
+
+    # ── page: Templates ───────────────────────────────────────────────────────
+
+    def _page_templates(self) -> Gtk.Widget:
+        t = self._theme
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        outer.set_margin_start(28)
+        outer.set_margin_end(28)
+        outer.set_margin_top(20)
+        outer.set_margin_bottom(20)
+
+        outer.pack_start(_section("Templates"), False, False, 0)
+        hint = Gtk.Label(label="Preview carga el template en todos los formularios. Apply también marca cambios pendientes.")
+        hint.set_xalign(0)
+        hint.set_line_wrap(True)
+        hint.get_style_context().add_class("field-label")
+        hint.set_margin_bottom(16)
+        outer.pack_start(hint, False, False, 0)
+
+        flow = Gtk.FlowBox()
+        flow.set_max_children_per_line(3)
+        flow.set_min_children_per_line(1)
+        flow.set_column_spacing(12)
+        flow.set_row_spacing(12)
+        flow.set_selection_mode(Gtk.SelectionMode.NONE)
+        flow.set_homogeneous(True)
+
+        for name, tpl in _TEMPLATES:
+            css   = tpl["css"]
+            c_base   = css["base"]
+            c_acc1   = css["blue"]
+            c_acc2   = css["mauve"]
+            c_text   = css["text"]
+            c_sub    = css["subtext0"]
+            c_surf   = css["surface0"]
+            style_tag = "Islands" if tpl["bar-style"] == "islands" else "Bar"
+
+            card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+            card.set_margin_start(2)
+            card.set_margin_end(2)
+            card.set_margin_top(2)
+            card.set_margin_bottom(2)
+
+            # top accent strip
+            strip = Gtk.DrawingArea()
+            strip.set_size_request(-1, 6)
+            def _draw_strip(w, cr, c1=c_acc1, c2=c_acc2):
+                wd = w.get_allocated_width()
+                r1,g1,b1 = _hex_to_rgb(c1)
+                r2,g2,b2 = _hex_to_rgb(c2)
+                import cairo as _cairo
+                pat = _cairo.LinearGradient(0, 0, wd, 0)
+                pat.add_color_stop_rgb(0, r1, g1, b1)
+                pat.add_color_stop_rgb(1, r2, g2, b2)
+                cr.set_source(pat)
+                cr.rectangle(0, 0, wd, 6)
+                cr.fill()
+            strip.connect("draw", _draw_strip)
+
+            # card body — EventBox so background color renders
+            card_bg = Gtk.EventBox()
+            _bg_provider = Gtk.CssProvider()
+            _bg_provider.load_from_data(f"* {{ background-color: {c_base}; }}".encode())
+            card_bg.get_style_context().add_provider(_bg_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+            body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            body.set_margin_start(12)
+            body.set_margin_end(12)
+            body.set_margin_top(10)
+            body.set_margin_bottom(10)
+
+            # name — template text color
+            name_lbl = Gtk.Label(xalign=0)
+            name_lbl.set_ellipsize(Pango.EllipsizeMode.END)
+            name_lbl.set_markup(
+                f'<span foreground="{c_text}" weight="bold">{GLib.markup_escape_text(name)}</span>'
+            )
+
+            # palette · style — subtext color
+            sub_lbl = Gtk.Label(xalign=0)
+            sub_lbl.set_markup(
+                f'<span foreground="{c_sub}" size="small">{GLib.markup_escape_text(tpl["palette"])}  ·  {style_tag}</span>'
+            )
+
+            # color swatches
+            swatches = Gtk.DrawingArea()
+            swatches.set_size_request(-1, 18)
+            _swatch_colors = [c_base, c_surf, c_text, c_acc1, c_acc2]
+            def _draw_swatches(w, cr, cols=_swatch_colors):
+                r = 7
+                x = r + 2
+                for hx in cols:
+                    rv, gv, bv = _hex_to_rgb(hx)
+                    cr.set_source_rgb(rv, gv, bv)
+                    cr.arc(x, r + 1, r, 0, 6.2832)
+                    cr.fill()
+                    x += r * 2 + 6
+            swatches.connect("draw", _draw_swatches)
+
+            # buttons
+            btn_row = Gtk.Box(spacing=8)
+            btn_row.set_margin_top(4)
+
+            prev_btn = Gtk.Button(label="Vista previa")
+            prev_btn.get_style_context().add_class("btn-secondary")
+            prev_btn.connect("clicked", lambda _, _t=tpl, _n=name: self._load_template(_t, _n, apply=False))
+
+            apply_btn = Gtk.Button(label="Aplicar")
+            apply_btn.get_style_context().add_class("btn-save")
+            apply_btn.connect("clicked", lambda _, _t=tpl, _n=name: self._load_template(_t, _n, apply=True))
+
+            btn_row.pack_start(prev_btn,  True, True, 0)
+            btn_row.pack_start(apply_btn, True, True, 0)
+
+            body.pack_start(name_lbl, False, False, 0)
+            body.pack_start(sub_lbl,  False, False, 0)
+            body.pack_start(swatches, False, False, 0)
+            body.pack_start(btn_row,  False, False, 0)
+
+            card_bg.add(body)
+            card.pack_start(strip,   False, False, 0)
+            card.pack_start(card_bg, True,  True,  0)
+            card.get_style_context().add_class("module-card")
+
+            flow.add(card)
+
+        sw = Gtk.ScrolledWindow()
+        sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        sw.add(outer)
+
+        outer.pack_start(flow, False, False, 0)
+        return sw
+
+    def _load_template(self, tpl: dict, name: str, apply: bool):
+        css = tpl["css"]
+        # CSS colors
+        for k, v in css.items():
+            self._css_colors[k] = v
+        # Bar config — update self._cfg AND the form widgets so _collect() doesn't overwrite
+        for k in ("bar-style", "zone-radius", "border-width", "height", "spacing", "mod-padding"):
+            self._cfg[k] = tpl[k]
+        w = self._w
+        if "bar-style" in w:
+            _bar_styles = ["islands", "bar", "modules"]
+            try:
+                w["bar-style"].set_active(_bar_styles.index(tpl["bar-style"]))
+            except ValueError:
+                pass
+        for k in ("zone-radius", "border-width", "height", "spacing", "mod-padding"):
+            if k in w:
+                w[k].set_value(tpl[k])
+        # Workspaces
+        ws = self._cfg.setdefault("hyprland/workspaces", {})
+        ws["anim-color-1"]  = tpl["ws-color-1"]
+        ws["anim-color-2"]  = tpl["ws-color-2"]
+        ws["button-radius"] = tpl["ws-radius"]
+        # Logo (custom/arch)
+        arch   = self._cfg.setdefault("custom/arch", {})
+        glyph  = tpl["logo-glyph"]
+        sz     = tpl["logo-size"]
+        col    = tpl["logo-color"]
+        col_attr = f" color='{col}'" if re.match(r'^#[0-9a-fA-F]{6}$', col, re.IGNORECASE) else ""
+        arch["format"]          = f"<span font='JetBrainsMono Nerd Font Mono {sz}'{col_attr}>{glyph}</span>"
+        arch["arch-icon-glyph"] = glyph
+        arch["arch-pad-left"]   = self._cfg.get("custom/arch", {}).get("arch-pad-left", 15)
+        arch["arch-pad-right"]  = self._cfg.get("custom/arch", {}).get("arch-pad-right", 10)
+        # Update palette widgets in-place (no rebuild needed)
+        self._apply_palette(tpl["css"])
+        self._refresh_preview()
+        if apply:
+            try:
+                cfg_out = self._build_save_config()
+                css_out = self._build_save_css()
+                with open(self._config_path, "w") as f:
+                    json.dump(cfg_out, f, indent=4, ensure_ascii=False)
+                with open(self._css_path, "w") as f:
+                    f.write(css_out)
+            except Exception as e:
+                self._err(f"No se pudo aplicar template:\n{e}")
+                return
+            subprocess.Popen(["pkill", "-x", "waybar"])
+            GLib.timeout_add(600, self._relaunch_waybar)
+            self._status(f"✓  Template «{name}» — reiniciando waybar…")
+        else:
+            self._status(f"👁  Vista previa «{name}» — sin cambios guardados.")
+
+    # ── page: About ───────────────────────────────────────────────────────────
+
+    def _page_about(self) -> Gtk.Widget:
+        t = self._theme
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        outer.set_halign(Gtk.Align.CENTER)
+        outer.set_valign(Gtk.Align.CENTER)
+        outer.set_border_width(40)
+
+        # ── app icon + name ───────────────────────────────────────────────────
+        icon_img = Gtk.Image.new_from_icon_name("preferences-system", Gtk.IconSize.INVALID)
+        icon_img.set_pixel_size(72)
+        icon_img.set_margin_bottom(12)
+        outer.pack_start(icon_img, False, False, 0)
+
+        app_lbl = Gtk.Label()
+        app_lbl.set_markup(
+            f'<span foreground="{t["txt"]}" weight="bold" size="20000">vsWaybar Studio</span>'
+        )
+        outer.pack_start(app_lbl, False, False, 0)
+
+        ver_lbl = Gtk.Label()
+        ver_lbl.set_markup(
+            f'<span foreground="{t["dim"]}" size="13000">Version {__version__}</span>'
+        )
+        ver_lbl.set_margin_top(4)
+        outer.pack_start(ver_lbl, False, False, 0)
+
+        desc_lbl = Gtk.Label()
+        desc_lbl.set_markup(
+            f'<span foreground="{t["dim"]}" size="13000">Graphical config editor for Waybar</span>'
+        )
+        desc_lbl.set_margin_top(2)
+        outer.pack_start(desc_lbl, False, False, 0)
+
+        lic_lbl = Gtk.Label()
+        lic_lbl.set_markup(
+            f'<span foreground="{t["acc"]}" size="11000">MIT License</span>'
+        )
+        lic_lbl.set_margin_top(6)
+        outer.pack_start(lic_lbl, False, False, 0)
+
+        sep1 = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        sep1.set_margin_top(24)
+        sep1.set_margin_bottom(20)
+        outer.pack_start(sep1, False, False, 0)
+
+        # ── author ────────────────────────────────────────────────────────────
+        author_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
+        author_box.set_halign(Gtk.Align.CENTER)
+
+        user_img = Gtk.Image.new_from_icon_name("system-users", Gtk.IconSize.INVALID)
+        user_img.set_pixel_size(36)
+        author_box.pack_start(user_img, False, False, 0)
+
+        author_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+        author_name = Gtk.Label()
+        author_name.set_markup(
+            f'<span foreground="{t["txt"]}" weight="bold" size="14000">Víctor Sosa</span>'
+        )
+        author_name.set_halign(Gtk.Align.START)
+        author_role = Gtk.Label()
+        author_role.set_markup(
+            f'<span foreground="{t["dim"]}" size="12000">Developer  ·  victorsosa.com</span>'
+        )
+        author_role.set_halign(Gtk.Align.START)
+        author_vbox.pack_start(author_name, False, False, 0)
+        author_vbox.pack_start(author_role, False, False, 0)
+        author_box.pack_start(author_vbox, False, False, 0)
+        outer.pack_start(author_box, False, False, 0)
+
+        sep2 = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        sep2.set_margin_top(20)
+        sep2.set_margin_bottom(20)
+        outer.pack_start(sep2, False, False, 0)
+
+        # ── link buttons ──────────────────────────────────────────────────────
+        def _open(url):
+            subprocess.Popen(["xdg-open", url],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        btn_row = Gtk.Box(spacing=12)
+        btn_row.set_halign(Gtk.Align.CENTER)
+
+        gh_btn = Gtk.Button()
+        gh_box = Gtk.Box(spacing=6)
+        gh_box.pack_start(Gtk.Image.new_from_icon_name("system-software-install", Gtk.IconSize.MENU), False, False, 0)
+        gh_box.pack_start(Gtk.Label(label="vsWaybar Studio"), False, False, 0)
+        gh_btn.add(gh_box)
+        gh_btn.get_style_context().add_class("save-btn")
+        gh_btn.connect("clicked", lambda *_: _open("https://github.com/victorsosaMx/vsWaybar-Studio"))
+
+        waybar_btn = Gtk.Button()
+        wb_box = Gtk.Box(spacing=6)
+        wb_box.pack_start(Gtk.Image.new_from_icon_name("system-software-install", Gtk.IconSize.MENU), False, False, 0)
+        wb_box.pack_start(Gtk.Label(label="Waybar"), False, False, 0)
+        waybar_btn.add(wb_box)
+        waybar_btn.get_style_context().add_class("open-btn")
+        waybar_btn.connect("clicked", lambda *_: _open("https://github.com/Alexays/Waybar"))
+
+        web_btn = Gtk.Button()
+        web_box = Gtk.Box(spacing=6)
+        web_box.pack_start(Gtk.Image.new_from_icon_name("applications-internet", Gtk.IconSize.MENU), False, False, 0)
+        web_box.pack_start(Gtk.Label(label="victorsosa.com"), False, False, 0)
+        web_btn.add(web_box)
+        web_btn.get_style_context().add_class("open-btn")
+        web_btn.connect("clicked", lambda *_: _open("https://victorsosa.com/"))
+
+        btn_row.pack_start(gh_btn,      False, False, 0)
+        btn_row.pack_start(waybar_btn,  False, False, 0)
+        btn_row.pack_start(web_btn,     False, False, 0)
+        outer.pack_start(btn_row, False, False, 0)
+
+        sw = Gtk.ScrolledWindow()
+        sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        sw.get_style_context().add_class("page-scroll")
+        vp = Gtk.Viewport()
+        vp.set_shadow_type(Gtk.ShadowType.NONE)
+        vp.get_style_context().add_class("page-scroll")
+        vp.add(outer)
+        sw.add(vp)
+        return sw
+
+    def _ws_anim_tick(self):
+        # ~3 s cycle at 20 fps (50 ms interval → 60 ticks per 3 s)
+        self._ws_anim_t = (self._ws_anim_t + 1 / 60) % 1.0
+        if self._bar_preview_da:
+            self._bar_preview_da.queue_draw()
+        return True  # keep repeating
+
+    def _refresh_preview(self, *_):
+        self._collect()
+        if self._bar_preview_da:
+            self._bar_preview_da.queue_draw()
+
+    def _status(self, main: str, hint: str = "", timeout: int = 5000):
+        self._status_lbl.set_text(main)
+        self._status_hint.set_text(hint)
+        if self._status_timer:
+            GLib.source_remove(self._status_timer)
+        def _clear():
+            self._status_lbl.set_text("")
+            self._status_hint.set_text("")
+            self._status_timer = None
+            return False
+        self._status_timer = GLib.timeout_add(timeout, _clear)
+
+    def _err(self, msg: str):
+        dlg = Gtk.MessageDialog(
+            parent=self, flags=Gtk.DialogFlags.MODAL,
+            message_type=Gtk.MessageType.ERROR,
+            buttons=Gtk.ButtonsType.OK, text="Error",
+        )
+        dlg.format_secondary_text(msg)
+        dlg.run()
+        dlg.destroy()
+
+
+
+    def _connect_preview_signals(self):
+        # Zone stores → refresh when modules added/removed/reordered
+        for zone in ("modules-left", "modules-center", "modules-right"):
+            store = self._w.get(f"zone_{zone}")
+            if store:
+                store.connect("row-changed",  self._refresh_preview)
+                store.connect("row-inserted", self._refresh_preview)
+                store.connect("row-deleted",  self._refresh_preview)
+        # CSS color entries → refresh on valid hex change
+        for entry in self._w.get("css_hex_entries", {}).values():
+            entry.connect("changed", self._refresh_preview)
+        # CSS color buttons → refresh on pick
+        for btn in self._w.get("css_colors", {}).values():
+            btn.connect("color-set", self._refresh_preview)
+
+
+# ── entry point ───────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    GLib.set_prgname("vswaybar-studio")
+    GLib.set_application_name("vsWaybar Studio")
+    VsWaybarSettings()
+    Gtk.main()
