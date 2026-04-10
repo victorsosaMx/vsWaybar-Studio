@@ -4,6 +4,29 @@ All notable changes to vsWaybar Studio are documented here.
 
 ---
 
+## [1.4.0] — 2026-04-09
+
+### New features
+
+- **Pill style (invert colors)** — every module form (both standard Waybar modules and custom user modules) now has a "Pill style (invert colors)" toggle switch. When enabled, the module renders with its assigned color token as a solid rounded background and `@base` as the text color — matching the inverted pill aesthetic popularized by bars like Omarchy. The border-radius follows the bar's configured `zone-radius` so it integrates naturally with all bar styles (bar / islands / modules). Live preview updates instantly on toggle.
+  - Bar modules: the color token (`@peach` for CPU, `@mauve` for memory, `@green` for network, etc.) becomes the background; text uses `@base`.
+  - Custom user modules: the hex color from the color picker becomes the background.
+  - Dock modules: full pill support with hover state (slightly dimmed background).
+  - The `_inverted` flag is persisted in `config.jsonc` and restored on reopen.
+
+- **`vsbar.py` — unified bar-visualization script** — four new `custom/bar-*` modules (`bar-cpu`, `bar-mem`, `bar-vol`, `bar-wifi`) backed by a single script `vsbar.py` installed to `~/.config/waybar/scripts/`. The script uses `--type cpu|mem|vol|wifi` dispatch and renders a configurable fill-bar (default 8 segments, `█` / `░` characters) with percentage label. Output is Waybar JSON (`text`, `tooltip`, `percentage`). Options: `--width N`, `--fill CHAR`, `--empty CHAR`, `--no-label`, `--show-total` (memory). Each module has a dedicated form in the Modules tab with an Install button and exec presets.
+
+### Bug fixes
+
+- **Module colors not reflected in system Waybar** — the `_MOD_CSS_TOKENS` enforcement loop was not running for all standard modules; extended the loop and added explicit color rules for the new `custom/bar-*` modules in the modpad block. All preview colors now match the system bar.
+- **`.modules-right` CSS block duplicating on every Apply** — the regex replacing the modules zone block was too narrow; extended it to also consume any trailing orphaned `.modules-right { padding-right: … }` block left by previous saves, preventing accumulation across multiple Applies.
+- **`[Errno 17]` crash on second Apply** — `os.makedirs(orig_dir)` in `_backup_configs()` raised `FileExistsError` when the `backups/original/` directory already existed but was empty; fixed with `exist_ok=True`.
+- **Dock user module icon wrong in preview** — dock modules whose config lives in `self._cfg` (bar user modules also added to the dock layout) were not found by the `mod in dock` check; `mod_html` now falls back to `self._cfg` for both `format` (glyph) and `_color` when the dock config dict lacks the key.
+- **Dock user module color not applied in system** — `_build_save_dock_css()` only looked up `_color` in `self._dock_cfg`; it now falls back to `self._cfg` for modules shared between bar user modules and dock zones. Same fallback applied to the hover color rule.
+- **Pill `color: @base` overwritten by `_MOD_CSS_TOKENS`** — the `_MOD_CSS_TOKENS` regex loop was running after the modpad block was appended and patching the pill rules' `color: @base` back to the module's token color (e.g. `@green`), making text invisible on the colored background. Pill rules are now appended after the `_MOD_CSS_TOKENS` loop so they cannot be overwritten.
+
+---
+
 ## [1.3.1] — 2026-04-06
 
 ### Improvements

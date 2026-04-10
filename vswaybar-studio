@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """vsWaybar Studio — graphical config editor for Waybar"""
 
-__version__ = "1.3.1"
+__version__ = "1.4.0"
 
 import gi
 gi.require_version('Gtk', '3.0')
@@ -196,6 +196,40 @@ DEFAULTS = {
         "format": "󰒓",
         "on-click": "vswaybar-studio",
         "tooltip": False,
+    },
+    "custom/claudebar": {
+        "exec": "claudebar --format '{session_bar} {session_pct}% · {session_reset}'",
+        "return-type": "json",
+        "interval": 30,
+        "signal": 13,
+        "tooltip": True,
+        "on-click": "xdg-open https://claude.ai/settings/usage",
+    },
+    "custom/bar-cpu": {
+        "exec":        "$HOME/.config/waybar/scripts/vsbar.py --type cpu",
+        "return-type": "json",
+        "interval":    2,
+        "tooltip":     True,
+    },
+    "custom/bar-mem": {
+        "exec":        "$HOME/.config/waybar/scripts/vsbar.py --type mem",
+        "return-type": "json",
+        "interval":    5,
+        "tooltip":     True,
+    },
+    "custom/bar-vol": {
+        "exec":        "$HOME/.config/waybar/scripts/vsbar.py --type vol",
+        "return-type": "json",
+        "interval":    2,
+        "tooltip":     True,
+        "on-click":    "pavucontrol",
+    },
+    "custom/bar-wifi": {
+        "exec":        "$HOME/.config/waybar/scripts/vsbar.py --type wifi",
+        "return-type": "json",
+        "interval":    5,
+        "tooltip":     True,
+        "on-click":    "nm-connection-editor",
     },
     "custom/weather": {
         "format": "{}",
@@ -909,6 +943,8 @@ ALL_MODULES = [
     # Custom
     "custom/arch", "custom/weather", "custom/updates",
     "custom/swaync", "custom/power", "custom/settings",
+    "custom/claudebar",
+    "custom/bar-cpu", "custom/bar-mem", "custom/bar-vol", "custom/bar-wifi",
 ]
 
 _W = "https://github.com/Alexays/Waybar/wiki/Module:-"
@@ -937,6 +973,11 @@ MODULE_WIKI = {
     "custom/swaync":       _W + "Custom",
     "custom/power":        _W + "Custom",
     "custom/settings":     _W + "Custom",
+    "custom/claudebar":    _W + "Custom",
+    "custom/bar-cpu":      _W + "Custom",
+    "custom/bar-mem":      _W + "Custom",
+    "custom/bar-vol":      _W + "Custom",
+    "custom/bar-wifi":     _W + "Custom",
 }
 
 MOD_SAMPLE = {
@@ -965,6 +1006,11 @@ MOD_SAMPLE = {
     "custom/swaync":       "󰂚",
     "custom/power":        "⏻",
     "custom/settings":     "󰒓",
+    "custom/claudebar":    "░░░░░░░░░░ 0%",
+    "custom/bar-cpu":      "󰍛 ▓▓▓░░░░░ 38%",
+    "custom/bar-mem":      "󰾆 ▓▓▓▓░░░░ 5.1G",
+    "custom/bar-vol":      "󰕾 ▓▓▓▓▓░░░ 60%",
+    "custom/bar-wifi":     "󰖩 ▓▓▓▓▓▓░░ 75%",
 }
 
 MODULE_LABELS = {
@@ -993,10 +1039,16 @@ MODULE_LABELS = {
     "custom/swaync":       ("󰂚", "Notifs"),
     "custom/power":        ("⏻", "Power"),
     "custom/settings":     ("󰒓", "Config"),
+    "custom/claudebar":    ("󰚩", "Claude Bar"),
+    "custom/bar-cpu":      ("󰍛", "Bar CPU"),
+    "custom/bar-mem":      ("󰾆", "Bar Memory"),
+    "custom/bar-vol":      ("󰕾", "Bar Volume"),
+    "custom/bar-wifi":     ("󰖩", "Bar WiFi"),
 }
 
 _RESERVED_CUSTOM = frozenset({
-    "arch", "weather", "updates", "swaync", "power", "settings"
+    "arch", "weather", "updates", "swaync", "power", "settings", "claudebar",
+    "bar-cpu", "bar-mem", "bar-vol", "bar-wifi",
 })
 
 _USER_GLYPHS = [
@@ -1136,6 +1188,40 @@ MODULE_DEFAULTS = {
         "format":   "󰒓",
         "on-click": "vswaybar-studio",
         "tooltip":  False,
+    },
+    "custom/claudebar": {
+        "exec":       "claudebar --format '{session_bar} {session_pct}% · {session_reset}'",
+        "return-type": "json",
+        "interval":   30,
+        "signal":     13,
+        "tooltip":    True,
+        "on-click":   "xdg-open https://claude.ai/settings/usage",
+    },
+    "custom/bar-cpu": {
+        "exec":        "$HOME/.config/waybar/scripts/vsbar.py --type cpu",
+        "return-type": "json",
+        "interval":    2,
+        "tooltip":     True,
+    },
+    "custom/bar-mem": {
+        "exec":        "$HOME/.config/waybar/scripts/vsbar.py --type mem",
+        "return-type": "json",
+        "interval":    5,
+        "tooltip":     True,
+    },
+    "custom/bar-vol": {
+        "exec":        "$HOME/.config/waybar/scripts/vsbar.py --type vol",
+        "return-type": "json",
+        "interval":    2,
+        "tooltip":     True,
+        "on-click":    "pavucontrol",
+    },
+    "custom/bar-wifi": {
+        "exec":        "$HOME/.config/waybar/scripts/vsbar.py --type wifi",
+        "return-type": "json",
+        "interval":    5,
+        "tooltip":     True,
+        "on-click":    "nm-connection-editor",
     },
     "bluetooth": {
         "format":           "󰂯",
@@ -2712,7 +2798,8 @@ class VsWaybarSettings(Gtk.Window):
 
         css_text = re.sub(
             r'\.modules-left,\s*\n\.modules-center,\s*\n\.modules-right\s*\{[^}]+\}'
-            r'(?:\s*\n\n\.modules-left\s*>\s*\*,[\s\S]*?\})?',
+            r'(?:\s*\n\n\.modules-left\s*>\s*\*,[\s\S]*?\})?'
+            r'(?:\s*\n\n\.modules-right\s*\{[^}]+\})*',
             modules_block,
             css_text
         )
@@ -2728,22 +2815,41 @@ class VsWaybarSettings(Gtk.Window):
             f"{B} #clock, {B} #cpu, {B} #memory, {B} #network,\n"
             f"{B} #pulseaudio, {B} #battery, {B} #tray,\n"
             f"{B} #custom-updates, {B} #custom-weather, {B} #custom-swaync,\n"
-            f"{B} #custom-power, {B} #custom-settings {{\n"
+            f"{B} #custom-power, {B} #custom-settings, {B} #custom-claudebar,\n"
+            f"{B} #custom-bar-cpu, {B} #custom-bar-mem,\n"
+            f"{B} #custom-bar-vol, {B} #custom-bar-wifi {{\n"
             f"    padding: 0 {mod_pad}px;\n"
             f"}}\n"
             f"{B} #custom-arch {{\n"
             f"    padding: 0 {arch_pr}px 0 {arch_pl}px;\n"
             f"}}\n"
+            f"{B} #custom-bar-cpu  {{ color: @peach; }}\n"
+            f"{B} #custom-bar-mem  {{ color: @mauve; }}\n"
+            f"{B} #custom-bar-vol  {{ color: @blue; }}\n"
+            f"{B} #custom-bar-wifi {{ color: @green; }}\n"
         )
-        # user modules: one block each with padding + color
+        # user modules: one block each with padding + color (or pill style)
         for suffix in self._cfg.get("_user_modules", []):
-            color = self._cfg.get(f"custom/{suffix}", {}).get("_color", "#a6adc8")
-            css_text += (
-                f"{B} #custom-{suffix} {{\n"
-                f"    padding: 0 {mod_pad}px;\n"
-                f"    color: {color};\n"
-                f"}}\n"
-            )
+            mod_u   = f"custom/{suffix}"
+            color   = self._cfg.get(mod_u, {}).get("_color", "#a6adc8")
+            inverted = self._cfg.get(mod_u, {}).get("_inverted", False)
+            if inverted:
+                css_text += (
+                    f"{B} #custom-{suffix} {{\n"
+                    f"    padding: 0 {mod_pad}px;\n"
+                    f"    background: {color};\n"
+                    f"    color: @base;\n"
+                    f"    border-radius: {zone_r}px;\n"
+                    f"    margin: 2px 0;\n"
+                    f"}}\n"
+                )
+            else:
+                css_text += (
+                    f"{B} #custom-{suffix} {{\n"
+                    f"    padding: 0 {mod_pad}px;\n"
+                    f"    color: {color};\n"
+                    f"}}\n"
+                )
         # dock modules used in bar zones — padding + color (window#bar scoped)
         bar_all = (self._cfg.get("modules-left", []) +
                    self._cfg.get("modules-center", []) +
@@ -2765,7 +2871,6 @@ class VsWaybarSettings(Gtk.Window):
                 f"    color: {color};\n"
                 f"}}\n"
             )
-
         # ── separators (bar namespace) ────────────────────────────────────────
         separators = self._cfg.get("separators", False)
         css_text = re.sub(r'\n*/\* vswaybar:sep \*/.*$', '', css_text, flags=re.DOTALL)
@@ -2783,17 +2888,78 @@ class VsWaybarSettings(Gtk.Window):
                 f"}}\n"
             )
 
-        # ── enforce module color assignments (clock=@blue, weather=@peach) ────
-        css_text = re.sub(
-            r'(#clock\s*\{[^}]*?color:\s*)[^;]+;',
-            r'\g<1>@blue;',
-            css_text, flags=re.DOTALL
-        )
-        css_text = re.sub(
-            r'(#custom-weather\s*\{[^}]*?color:\s*)[^;]+;',
-            r'\g<1>@peach;',
-            css_text, flags=re.DOTALL
-        )
+        # ── enforce module color assignments to match preview MOD_COLOR ─────────
+        _MOD_CSS_TOKENS = {
+            "clock":            "@blue",
+            "cpu":              "@peach",
+            "memory":           "@mauve",
+            "network":          "@green",
+            "pulseaudio":       "@blue",
+            "wireplumber":      "@blue",
+            "battery":          "@green",
+            "tray":             "@subtext0",
+            "window":           "@subtext0",
+            "custom-updates":   "@green",
+            "custom-weather":   "@peach",
+            "custom-swaync":    "@text",
+            "custom-power":     "@red",
+            "custom-settings":  "@subtext0",
+            "custom-claudebar": "@green",
+            "custom-bar-cpu":   "@peach",
+            "custom-bar-mem":   "@mauve",
+            "custom-bar-vol":   "@blue",
+            "custom-bar-wifi":  "@green",
+            "temperature":      "@peach",
+            "disk":             "@yellow",
+            "bluetooth":        "@blue",
+            "backlight":        "@yellow",
+            "mpris":            "@mauve",
+            "idle-inhibitor":   "@subtext0",
+        }
+        for _css_id, _token in _MOD_CSS_TOKENS.items():
+            css_text = re.sub(
+                rf'(#{re.escape(_css_id)}\s*\{{[^}}]*?color:\s*)[^;]+;',
+                rf'\g<1>{_token};',
+                css_text, flags=re.DOTALL
+            )
+
+        # ── pill (inverted) rules — MUST be after _MOD_CSS_TOKENS so they aren't patched ──
+        _PILL_CSS_MAP = {
+            "clock":            ("clock",            "@blue"),
+            "cpu":              ("cpu",              "@peach"),
+            "memory":           ("memory",           "@mauve"),
+            "network":          ("network",          "@green"),
+            "pulseaudio":       ("pulseaudio",       "@blue"),
+            "wireplumber":      ("wireplumber",      "@blue"),
+            "battery":          ("battery",          "@green"),
+            "temperature":      ("temperature",      "@peach"),
+            "disk":             ("disk",             "@yellow"),
+            "bluetooth":        ("bluetooth",        "@blue"),
+            "backlight":        ("backlight",        "@yellow"),
+            "mpris":            ("mpris",            "@mauve"),
+            "idle_inhibitor":   ("idle_inhibitor",   "@subtext0"),
+            "tray":             ("tray",             "@subtext0"),
+            "custom/updates":   ("custom-updates",   "@green"),
+            "custom/weather":   ("custom-weather",   "@peach"),
+            "custom/swaync":    ("custom-swaync",    "@text"),
+            "custom/power":     ("custom-power",     "@red"),
+            "custom/settings":  ("custom-settings",  "@subtext0"),
+            "custom/claudebar": ("custom-claudebar", "@green"),
+            "custom/bar-cpu":   ("custom-bar-cpu",   "@peach"),
+            "custom/bar-mem":   ("custom-bar-mem",   "@mauve"),
+            "custom/bar-vol":   ("custom-bar-vol",   "@blue"),
+            "custom/bar-wifi":  ("custom-bar-wifi",  "@green"),
+        }
+        for _pk, (_cid, _tok) in _PILL_CSS_MAP.items():
+            if self._cfg.get(_pk, {}).get("_inverted", False):
+                css_text += (
+                    f"{B} #{_cid} {{\n"
+                    f"    background: {_tok};\n"
+                    f"    color: @base;\n"
+                    f"    border-radius: {zone_r}px;\n"
+                    f"    margin: 2px 0;\n"
+                    f"}}\n"
+                )
 
         # ── workspace animation colors ───────────────────────────────────────
         ws_c = self._cfg.get("hyprland/workspaces", {})
@@ -2981,8 +3147,14 @@ class VsWaybarSettings(Gtk.Window):
             out.append("")
             for mod in all_dock_mods:
                 css_id = f"{D} #{mod.replace('/', '-')}"
-                col = self._dock_cfg.get(mod, {}).get("_color", "")
-                if re.match(r'^#[0-9a-fA-F]{6}$', col, re.IGNORECASE):
+                # fall back to bar cfg for modules shared between bar user_modules and dock
+                col = (self._dock_cfg.get(mod, {}).get("_color", "")
+                       or self._cfg.get(mod, {}).get("_color", ""))
+                inverted = (self._dock_cfg.get(mod, {}).get("_inverted", False)
+                            or self._cfg.get(mod, {}).get("_inverted", False))
+                if inverted and re.match(r'^#[0-9a-fA-F]{6}$', col, re.IGNORECASE):
+                    out.append(f"{css_id} {{ background: {col}; color: @base; border-radius: {zone_r}px; margin: 2px 0; }}")
+                elif re.match(r'^#[0-9a-fA-F]{6}$', col, re.IGNORECASE):
                     out.append(f"{css_id} {{ color: {col}; }}")
                 else:
                     out.append(f"{css_id} {{ color: @text; }}")
@@ -2990,15 +3162,21 @@ class VsWaybarSettings(Gtk.Window):
             for mod in all_dock_mods:
                 suffix = mod[7:]
                 css_id = f"{D} #{mod.replace('/', '-')}"
-                if suffix in _HOVER_DEFAULTS:
+                inverted = (self._dock_cfg.get(mod, {}).get("_inverted", False)
+                            or self._cfg.get(mod, {}).get("_inverted", False))
+                if suffix in _HOVER_DEFAULTS and not inverted:
                     hcol, hrgb = _HOVER_DEFAULTS[suffix]
                     out.append(f"{css_id}:hover {{ color: {hcol}; background: rgba({hrgb},0.12); }}")
                 else:
-                    col = self._dock_cfg.get(mod, {}).get("_color", "")
+                    col = (self._dock_cfg.get(mod, {}).get("_color", "")
+                           or self._cfg.get(mod, {}).get("_color", ""))
                     if re.match(r'^#[0-9a-fA-F]{6}$', col, re.IGNORECASE):
                         h = col.lstrip("#")
                         r2, g2, b2 = int(h[0:2],16), int(h[2:4],16), int(h[4:6],16)
-                        out.append(f"{css_id}:hover {{ color: {col}; background: rgba({r2},{g2},{b2},0.12); }}")
+                        if inverted:
+                            out.append(f"{css_id}:hover {{ background: rgba({r2},{g2},{b2},0.85); color: @base; }}")
+                        else:
+                            out.append(f"{css_id}:hover {{ color: {col}; background: rgba({r2},{g2},{b2},0.12); }}")
             out.append("")
 
         # ── separators ────────────────────────────────────────────────────────
@@ -3179,7 +3357,7 @@ class VsWaybarSettings(Gtk.Window):
 
         # ── original/ — created once, never overwritten ────────────────────
         if not os.path.isdir(orig_dir) or not os.listdir(orig_dir):
-            os.makedirs(orig_dir)
+            os.makedirs(orig_dir, exist_ok=True)
             for src in (self._config_path, self._css_path):
                 if os.path.isfile(src):
                     shutil.copy2(src, os.path.join(orig_dir, os.path.basename(src)))
@@ -3952,7 +4130,7 @@ class VsWaybarSettings(Gtk.Window):
             "network": green, "memory": mauve,
             "cpu": peach, "battery": green,
             "custom/swaync": text_c, "custom/power": red_c,
-            "custom/settings": sub0,
+            "custom/settings": sub0, "custom/claudebar": green,
         }
         # add user command modules with their stored color
         for _suf in self._cfg.get("_user_modules", []):
@@ -4157,15 +4335,22 @@ class VsWaybarSettings(Gtk.Window):
             "bluetooth":           blue,   "backlight":           yellow,
             "idle_inhibitor":      sub0,   "mpris":               mauve,
             "privacy":             sub0,   "wlr/taskbar":         sub0,
+            "custom/claudebar":    green,
+            "custom/bar-cpu":      peach,
+            "custom/bar-mem":      mauve,
+            "custom/bar-vol":      blue,
+            "custom/bar-wifi":     green,
         }
         for suf in cfg.get("_user_modules", []):
             h = cfg.get(f"custom/{suf}", {}).get("_color", "")
             MOD_COLOR[f"custom/{suf}"] = h if re.match(r'^#[0-9a-fA-F]{6}$', h) else sub0
-        for _m in (cfg.get("modules-left", []) +
-                   cfg.get("modules-center", []) +
-                   cfg.get("modules-right", [])):
-            if _m.startswith("custom/") and _m in dock:
-                h = dock[_m].get("_color", "")
+        # dock modules: populate MOD_COLOR from dock cfg (fall back to bar cfg)
+        for _m in (dock.get("modules-left", []) +
+                   dock.get("modules-center", []) +
+                   dock.get("modules-right", [])):
+            if _m.startswith("custom/"):
+                h = (dock.get(_m, {}).get("_color", "")
+                     or cfg.get(_m, {}).get("_color", ""))
                 if re.match(r'^#[0-9a-fA-F]{6}$', h):
                     MOD_COLOR[_m] = h
 
@@ -4211,17 +4396,35 @@ class VsWaybarSettings(Gtk.Window):
 
             # For dock modules use the format (glyph) from the dock config
             _custom_fb = "󰘳" if mod.startswith("custom/") else mod.split("/")[-1][:4]
-            if is_dock and mod in dock:
-                label = dock[mod].get("format", "") or MOD_SAMPLE.get(mod, _custom_fb)
+            if is_dock:
+                # fall back to bar cfg for modules that live in both bar user_modules and dock
+                _dock_fmt = dock.get(mod, {}).get("format", "") or cfg.get(mod, {}).get("format", "")
+                label = _dock_fmt or MOD_SAMPLE.get(mod, _custom_fb)
             else:
                 label = MOD_SAMPLE.get(mod, _custom_fb)
             color = MOD_COLOR.get(mod, sub0)
             if is_dock:
-                dc = dock.get(mod, {}).get("_color", "")
+                dc = dock.get(mod, {}).get("_color", "") or cfg.get(mod, {}).get("_color", "")
                 if re.match(r'^#[0-9a-fA-F]{6}$', dc):
                     color = dc
 
+            # pill / inverted style
+            _src_cfg = dock if is_dock else cfg
+            inverted = _src_cfg.get(mod, {}).get("_inverted", False)
+            if not inverted and not is_dock:
+                # for bar user modules, also check self._cfg directly
+                inverted = cfg.get(mod, {}).get("_inverted", False)
+
             h_total = dock_h if is_dock else bar_h
+            if inverted:
+                h_mod = h_total - 8
+                return (
+                    f'<span class="mod" style="padding:0 {pad}px;'
+                    f'background:{color};color:{base};'
+                    f'border-radius:{r}px;margin:0 2px;'
+                    f'height:{h_mod}px;display:inline-flex;align-items:center;">'
+                    f'{label}</span>'
+                )
             extra = ""
             if bstyle == "modules":
                 h_mod = h_total - 8
@@ -4864,6 +5067,13 @@ class VsWaybarSettings(Gtk.Window):
         color_row.pack_start(cbtn,      False, False, 0)
         color_row.pack_start(hex_entry, False, False, 0)
         outer.pack_start(color_row, False, False, 8)
+
+        pill_row_u, pill_sw_u = _switch_row("Pill style (invert colors)", bool(cfg.get("_inverted", False)))
+        pill_sw_u.set_tooltip_text("Swap: use the module color as background with base color text")
+        pill_sw_u.connect("notify::active", lambda *_: self._refresh_preview())
+        fields["_inverted"] = pill_sw_u
+        outer.pack_start(pill_row_u, False, False, 0)
+        outer.pack_start(_hint("Background = icon color, text = @base"), False, False, 4)
 
         # ── Mode: Launcher / Menu ─────────────────────────────────────────────
         outer.pack_start(_section("Mode"), False, False, 0)
@@ -6145,6 +6355,109 @@ class VsWaybarSettings(Gtk.Window):
             btn_row.pack_start(rofi_btn, True, True, 0)
             box.pack_start(btn_row, False, False, 0)
 
+        elif mod == "custom/claudebar":
+            box.pack_start(_section("Claude Code Usage"), False, False, 0)
+            box.pack_start(_hint("Muestra uso de sesión/semanal como barra de 10 cuadros (░ / █)."), False, False, 0)
+            _CB_PRESETS = [
+                "claudebar --format '{session_bar} {session_pct}% · {session_reset}'",
+                "claudebar --format '󰚩 {session_bar} {session_pct}%'",
+                "claudebar --format '{session_bar} {weekly_bar}'",
+                "claudebar --bar-len 10 --format '{session_bar} {session_pct}%'",
+                "claudebar --bar-len 5 --format '{session_bar} {weekly_bar}'",
+                "claudebar --format '󰚩 {session_pct}% · {session_reset}'",
+                "claudebar --format '{session_pct}% · {session_reset}'",
+                "claudebar --format '{icon} {session_pct}% {session_pace}'",
+            ]
+            add_combo_entry("Exec / format", "exec",
+                            cfg.get("exec", _CB_PRESETS[0]), _CB_PRESETS)
+            add_spin("Interval (s)",     "interval", cfg.get("interval", 30), 5, 3600, 30)
+            add_spin("Signal (RTMIN+N)", "signal",   cfg.get("signal",   13), 0, 32)
+            add_entry("On click",        "on-click", cfg.get("on-click", "xdg-open https://claude.ai/settings/usage"))
+            add_switch("Tooltip",        "tooltip",  cfg.get("tooltip",  True))
+
+            sep_cb = Gtk.Separator()
+            sep_cb.set_margin_top(10)
+            sep_cb.set_margin_bottom(6)
+            box.pack_start(sep_cb, False, False, 0)
+            box.pack_start(_hint("Refresh manual:  pkill -RTMIN+13 waybar"), False, False, 0)
+
+        elif mod in ("custom/bar-cpu", "custom/bar-mem", "custom/bar-vol", "custom/bar-wifi"):
+            _BARLABELS = {
+                "custom/bar-cpu":  ("󰍛", "Bar CPU",  "CPU usage como barra visual — usa bar_cpu.py"),
+                "custom/bar-mem":  ("󰾆", "Bar Memory","RAM usada como barra visual — usa bar_mem.py"),
+                "custom/bar-vol":  ("󰕾", "Bar Volume","Volumen de audio como barra visual — usa bar_vol.py"),
+                "custom/bar-wifi": ("󰖩", "Bar WiFi", "Señal WiFi como barra visual — usa bar_wifi.py"),
+            }
+            _icon, _name, _desc = _BARLABELS[mod]
+            box.pack_start(_section(f"{_icon}  {_name}"), False, False, 0)
+            box.pack_start(_hint(_desc), False, False, 0)
+
+            _S = "$HOME/.config/waybar/scripts/vsbar.py"
+            _type = mod.split("/bar-")[1]   # cpu | mem | vol | wifi
+            _base = f"{_S} --type {_type}"
+            _SCR = {
+                "custom/bar-cpu":  [
+                    _base,
+                    f"{_base} --width 10",
+                    f"{_base} --width 5",
+                    f"{_base} --no-label",
+                ],
+                "custom/bar-mem":  [
+                    _base,
+                    f"{_base} --show-total",
+                    f"{_base} --width 10",
+                    f"{_base} --width 10 --show-total",
+                    f"{_base} --no-label",
+                ],
+                "custom/bar-vol":  [
+                    _base,
+                    f"{_base} --width 10",
+                    f"{_base} --width 5",
+                    f"{_base} --no-label",
+                ],
+                "custom/bar-wifi": [
+                    _base,
+                    f"{_base} --width 10",
+                    f"{_base} --width 5",
+                    f"{_base} --no-label",
+                ],
+            }
+            add_combo_entry("Exec / args", "exec",
+                            cfg.get("exec", _base), _SCR[mod])
+            add_spin("Interval (s)", "interval", cfg.get("interval", 2), 1, 60)
+            if mod in ("custom/bar-vol", "custom/bar-wifi"):
+                add_entry("On click", "on-click", cfg.get("on-click",
+                    "pavucontrol" if mod == "custom/bar-vol" else "nm-connection-editor"))
+            add_switch("Tooltip", "tooltip", cfg.get("tooltip", True))
+
+            sep_bar = Gtk.Separator()
+            sep_bar.set_margin_top(10)
+            sep_bar.set_margin_bottom(6)
+            box.pack_start(sep_bar, False, False, 0)
+
+            _vsbar_path = os.path.expanduser("~/.config/waybar/scripts/vsbar.py")
+            _installed  = os.path.exists(_vsbar_path)
+            _status_txt = f"✓  vsbar.py instalado" if _installed else f"⚠  No encontrado: {_vsbar_path}"
+            box.pack_start(_hint(_status_txt), False, False, 0)
+
+            def _install_vsbar(*_):
+                app_dir = os.path.dirname(os.path.abspath(__file__))
+                src = os.path.join(app_dir, "vsbar.py")
+                dst = os.path.expanduser("~/.config/waybar/scripts/vsbar.py")
+                try:
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    import shutil as _sh
+                    _sh.copy2(src, dst)
+                    os.chmod(dst, 0o755)
+                    self._status("✓  vsbar.py instalado en scripts/")
+                except Exception as e:
+                    self._err(f"Error instalando vsbar.py:\n{e}")
+
+            inst_btn = Gtk.Button(label="↓  Instalar vsbar.py")
+            inst_btn.get_style_context().add_class("open-btn")
+            inst_btn.connect("clicked", _install_vsbar)
+            box.pack_start(inst_btn, False, False, 0)
+
         elif mod == "bluetooth":
             box.pack_start(_section("Bluetooth"), False, False, 0)
             add_entry("Format",           "format",           cfg.get("format", "󰂯"))
@@ -6275,6 +6588,18 @@ class VsWaybarSettings(Gtk.Window):
         box.pack_start(j_sep, False, False, 0)
         box.pack_start(_row("Text align", jc), False, False, 0)
 
+        # ── Pill style (invert colors) ─────────────────────────────────────────
+        pill_sep = Gtk.Separator()
+        pill_sep.set_margin_top(12)
+        pill_sep.set_margin_bottom(4)
+        box.pack_start(pill_sep, False, False, 0)
+        pill_row, pill_sw = _switch_row("Pill style (invert colors)", bool(cfg.get("_inverted", False)))
+        pill_sw.set_tooltip_text("Swap: use the module color as background with base color text")
+        pill_sw.connect("notify::active", lambda *_: self._refresh_preview())
+        fields["_inverted"] = pill_sw
+        box.pack_start(pill_row, False, False, 0)
+        box.pack_start(_hint("Background = module color, text = @base"), False, False, 4)
+
         return _scrolled(box)
 
     # ── page: Styling ─────────────────────────────────────────────────────────
@@ -6402,6 +6727,10 @@ class VsWaybarSettings(Gtk.Window):
          "~/.config/waybar/scripts/weather.sh",
          "Fallback weather via wttr.in (used if weather.py fails).",
          "weather.sh"),
+        ("󰡃  vsbar (CPU/Mem/Vol/WiFi)",
+         "~/.config/waybar/scripts/vsbar.py",
+         "Script unificado: --type cpu|mem|vol|wifi  --width N  --no-label  --show-total",
+         "vsbar.py"),
         ("󰚰  Install updates",
          "~/.config/hypr/scripts/install-updates.sh",
          "ML4W updater — runs yay + flatpak update in a terminal with gum.",
